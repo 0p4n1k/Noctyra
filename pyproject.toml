@@ -1,0 +1,12 @@
+[project]
+name = "noctyra"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "blosc>=1.11.4",
+    "brotli>=1.2.0",
+    "xdis>=6.1.8",
+    "zstd>=1.5.7.3",
+]
