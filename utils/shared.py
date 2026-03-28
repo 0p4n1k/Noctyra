@@ -13,6 +13,22 @@ import lzma
 import bz2
 import ast
 
+ATTR = {
+    'decode': bytes.decode,
+    'encode': str.encode,
+    'hex': bytes.hex,
+}
+
+FUNCS = {
+    'ord': ord,
+    'chr': chr,
+    'hex': hex,
+    'int': int,
+    'float': float,
+    'str': str,
+    'bytes': bytes
+}
+
 OPS = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,

@@ -4,6 +4,14 @@ import ast
 
 class SafeEval(ast.NodeVisitor):
     
+    def __init__(self, known_vars: dict | None = None) -> None:
+        super().__init__()
+        self.known_vars = known_vars or {}
+    
+    def get_name(self, name: str):
+        return self.known_vars.get(name)
+    
+    
     def visit(self, node):
         method = 'visit_' + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
@@ -33,5 +41,12 @@ class SafeEval(ast.NodeVisitor):
     def visit_Constant(self, node: ast.Constant):
         return node.value
     
-def safe_eval(node: ast.AST):
-    return SafeEval().visit(node)
+    def visit_Name(self, node: ast.Name):
+        return self.get_name(node.id)
+    
+    def visit_List(self, node: ast.List):
+        return [self.visit(elt) for elt in node.elts]
+    
+def safe_eval(node: ast.AST, known_vars: dict | None = None):
+    
+    return SafeEval(known_vars).visit(node)
