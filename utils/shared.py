@@ -13,10 +13,15 @@ import lzma
 import bz2
 import ast
 
+
 ATTR = {
     'decode': bytes.decode,
     'encode': str.encode,
     'hex': bytes.hex,
+    'join': str.join,
+    'isalpha': str.isalpha,
+    'isdigit': str.isdigit,
+    'isupper': str.isupper,
 }
 
 FUNCS = {
@@ -42,6 +47,12 @@ OPS = {
     ast.Gt: operator.gt,
     ast.Eq: operator.eq,
     ast.NotEq: operator.ne,
+    ast.LtE: operator.le,
+    ast.GtE: operator.ge,
+    ast.And: operator.and_,
+    ast.Or: operator.or_,
+    ast.LShift: operator.lshift,
+    ast.RShift: operator.rshift
 }
 
 encoding: dict[str, dict[str, FunctionType | MethodType]] = {

@@ -17,12 +17,17 @@ class BasicAttributes(ast.NodeTransformer):
             value = safe_eval(node.func.value)
 
             if value is not None:
-                attr_value = ATTR[attr_name]
+
+                args = [safe_eval(arg) for arg in node.args]
+
+                if any(arg is None for arg in args):
+                    return node
+
                 try:
-                    result = attr_value(value)
+                    result = getattr(value, attr_name)(*args)
                     return ast.Constant(value=result)
                 
-                except Exception as e:
-                    print(f"Error evaluating attribute {attr_name} on value {value}: {e}")
+                except Exception:
+                    pass
         
         return node

@@ -8,18 +8,22 @@ def main():
     
     
     
-    code = open("original.py").read()
+    code = open("original.py", 'rb').read()
     
     tree = ast.parse(code)
-    print(ast.dump(tree, indent=4))
-    
-    pipeline = TransformerPipeline(transformers=[ConstsTransformer, BasicFunctions, BasicAttributes, LCTransformer], iterations=1)
+
+    pipeline = TransformerPipeline(transformers=[ConstsTransformer, BasicFunctions, BasicAttributes, LCTransformer])
     
     result = pipeline.visit(tree)
-    
+
     new_code = ast.unparse(result)
     
-    # print(black.format_str(new_code, mode=black.Mode()))
+    res = black.format_str(new_code, mode=black.Mode())
+    
+    with open("transformed.py", 'w', encoding='utf-8') as f:
+        f.write(res)
+    
+    # print(res)
     
     
 if __name__ == "__main__":
