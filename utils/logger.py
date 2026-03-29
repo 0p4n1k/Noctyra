@@ -11,3 +11,4 @@ logging.basicConfig(
 
 
 LOGGER = logging.getLogger("rich")
+LOGGER.setLevel("INFO")

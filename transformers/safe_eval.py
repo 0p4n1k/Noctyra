@@ -1,6 +1,10 @@
 from utils.shared import ATTR, OPS, FUNCS
+from utils.logger import LOGGER
 import operator
 import ast
+
+MAX_ALLOCATION = 100_000
+MAX_INT = 100_000_000
 
 class SafeEval(ast.NodeVisitor):
     
@@ -11,6 +15,17 @@ class SafeEval(ast.NodeVisitor):
     def get_name(self, name: str):
         return self.known_vars.get(name)
     
+    def check_size(self, obj):
+        if isinstance(obj, (str, bytes, list, dict, set)):
+            if len(obj) > MAX_ALLOCATION:
+                LOGGER.debug(f"Size limit exceeded for {type(obj).__name__}")
+                return True
+        elif isinstance(obj, (int, float)):
+            if obj > MAX_ALLOCATION:
+                LOGGER.debug(f"Numeric limit exceeded for {type(obj).__name__}")
+                return True
+        return False
+
     
     def visit(self, node):
         method = 'visit_' + node.__class__.__name__
@@ -30,18 +45,31 @@ class SafeEval(ast.NodeVisitor):
         
         op = OPS.get(type(node.op))
         
-        if op is operator.truediv and right == 0:
+        if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and right == 0:
             return None
         
-        if op is None:
-            raise ValueError(f"Unsupported operation: {type(node.op).__name__}")
+        if isinstance(left, (list, dict, set, str, bytes, int)) and isinstance(right, int) and op in (operator.mul, operator.pow):
+            try:
+
+                if self.check_size(right): # type: ignore
+                    return None
+                
+            except Exception:
+                return None
         
-        return op(left, right)
+        if op is None:
+            return None
+        
+        try:
+            res = op(left, right)
+            LOGGER.debug(f"BinOp: {left!r} {type(node.op).__name__} {right!r} -> {res!r}")
+            return res
+        except Exception as e:
+            LOGGER.debug(f"BinOp failed: {e}")
+            return None
     
     def visit_BoolOp(self, node: ast.BoolOp):
         return all(self.visit(value) for value in node.values) if isinstance(node.op, ast.And) else any(self.visit(value) for value in node.values)
-    
-
     
     def visit_Call(self, node: ast.Call):
         
@@ -55,7 +83,13 @@ class SafeEval(ast.NodeVisitor):
                 if any(arg is None for arg in args):
                     return None
                 
-                return func(*args)
+                try:
+                    res = func(*args)
+                    LOGGER.debug(f"Call {func_name}({args}) -> {res!r}")
+                    return res
+                except Exception as e:
+                    LOGGER.debug(f"Call {func_name} failed: {e}")
+                    return None
             
         if isinstance(node.func, ast.Attribute):
             
@@ -68,9 +102,11 @@ class SafeEval(ast.NodeVisitor):
                     attr_value = ATTR[attr_name]
                     try:
                         result = attr_value(value)
+                        LOGGER.debug(f"Attr call: {type(value).__name__}.{attr_name} -> {result!r}")
                         return result
                     
-                    except Exception:
+                    except Exception as e:
+                        LOGGER.debug(f"Attr call {attr_name} failed: {e}")
                         pass
         
         return None
@@ -93,10 +129,6 @@ class SafeEval(ast.NodeVisitor):
         
         result = self.visit(node.body) if cond else self.visit(node.orelse)
         return result
-    
-    def visit_Attribute(self, node: ast.Attribute):
-
-        return getattr(self.visit(node.value), node.attr, None)
     
     def visit_Compare(self, node: ast.Compare):
         

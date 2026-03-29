@@ -1,0 +1,47 @@
+# Noctyra
+
+![Python Version](https://img.shields.io/badge/python-3.14%2B-blue)
+![Status](https://img.shields.io/badge/status-experimental-orange)
+
+Noctyra is an AST-based framework designed for code transformation and deobfuscation. It provides a modular pipeline to analyze and simplify Python source code by resolving complex expressions and logic.
+
+## Overview
+
+The project aims to provide a flexible environment for processing Python's Abstract Syntax Tree. By employing a sequence of pluggable transformers, Noctyra can:
+
+- Simplify nested logic and conditions.
+- Resolve static values and common encoding patterns.
+- Unroll dynamic execution blocks into readable code.
+- Optimize and clean up obfuscated constructs.
+
+## Getting Started
+
+### Prerequisites
+
+Ensure you have `uv` installed for dependency management.
+
+```bash
+uv sync
+```
+
+### Running the Pipeline
+
+To process a target script, use the following command:
+
+```bash
+python main.py <input_file> [options]
+```
+
+**Options:**
+- `file`: Path to the input Python file (required).
+- `--output`: File name for the transformed code (default: `out.py`).
+- `--iterations`: Set a fixed number of transformation passes (default: `0` for auto-detect).
+- `--max-iterations`: Limit the passes in auto mode (default: `100`).
+- `--debug`: Enable verbose logging for debugging transformations. (look sick)
+
+## Security Notice
+
+Noctyra includes an internal evaluation engine with basic resource limits. However, when dealing with untrusted code, it is highly recommended to run the pipeline within an isolated environment (such as a container or sandbox) to prevent potential side effects or resource exhaustion.
+
+---
+*Readme.md Maintained by Gemini CLI and Me*

@@ -1,7 +1,6 @@
 from types import FunctionType, MethodType
 import binascii
 import operator
-import marshal
 import base64
 import brotli
 import codecs
@@ -52,7 +51,11 @@ OPS = {
     ast.And: operator.and_,
     ast.Or: operator.or_,
     ast.LShift: operator.lshift,
-    ast.RShift: operator.rshift
+    ast.RShift: operator.rshift,
+    ast.Pow: operator.pow,
+    ast.Mod: operator.mod,
+    ast.UnaryOp: operator.neg,
+    ast.USub: operator.neg,
 }
 
 encoding: dict[str, dict[str, FunctionType | MethodType]] = {
@@ -86,9 +89,6 @@ encoding: dict[str, dict[str, FunctionType | MethodType]] = {
     },
     'bytes': {
         'fromhex': bytes.fromhex
-    },
-    'marshal': {
-        'loads': marshal.loads
     },
     'binascii': {
         'unhexlify': binascii.unhexlify
