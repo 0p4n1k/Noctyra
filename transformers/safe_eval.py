@@ -21,7 +21,7 @@ class SafeEval(ast.NodeVisitor):
                 LOGGER.debug(f"Size limit exceeded for {type(obj).__name__}")
                 return True
         elif isinstance(obj, (int, float)):
-            if obj > MAX_ALLOCATION:
+            if obj > MAX_INT or obj < -MAX_INT:
                 LOGGER.debug(f"Numeric limit exceeded for {type(obj).__name__}")
                 return True
         return False
@@ -105,17 +105,17 @@ class SafeEval(ast.NodeVisitor):
                 value = self.visit(node.func.value)
 
                 if value is not None:
-                    attr_value = ATTR[attr_name]
                     try:
-                        result = attr_value(value)
+                        args = [self.visit(arg) for arg in node.args]
+                        func = getattr(value, attr_name)
+                        result = func(*args)
                         LOGGER.debug(
                             f"Attr call: {type(value).__name__}.{attr_name} -> {result!r}"
                         )
                         return result
 
-                    except Exception as e:
-                        LOGGER.debug(f"Attr call {attr_name} failed: {e}")
-                        pass
+                    except Exception:
+                        return None
 
         return None
 
@@ -140,12 +140,19 @@ class SafeEval(ast.NodeVisitor):
 
     def visit_Compare(self, node: ast.Compare):
 
-        result = all(
-            OPS.get(type(op), lambda a, b: None)(
-                self.visit(node.left), self.visit(node.comparators[i])
+        if len(node.ops) != len(node.comparators):
+            return None
+
+        try:
+            result = all(
+                OPS.get(type(op), lambda a, b: None)(
+                    self.visit(node.left), self.visit(node.comparators[i])
+                )
+                for i, op in enumerate(node.ops)
             )
-            for i, op in enumerate(node.ops)
-        )
+        except Exception as e:
+            LOGGER.debug(f"Compare failed: {e}")
+            return None
 
         return result
 
