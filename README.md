@@ -39,6 +39,27 @@ python main.py <input_file> [options]
 - `--max-iterations`: Limit the passes in auto mode (default: `100`).
 - `--debug`: Enable verbose logging for debugging transformations. (look sick)
 
+## Development
+
+This project uses `uv` for dependency management and a `Makefile` for common tasks.
+
+### Setup
+```bash
+uv sync --all-extras --dev
+```
+
+### Quality Control
+Before submitting a PR or pushing changes, ensure all checks pass:
+
+- **Run Tests**: `make test`
+- **Lint & Format**: `make format`
+- **Type Check**: `make typecheck`
+
+*(Windows users: These commands work automatically via `make.bat`.)*
+
+### CI/CD
+Automated checks are performed on every push via GitHub Actions, including linting with Ruff, type checking with Mypy, and unit testing with Pytest.
+
 ## Security Notice
 
 Noctyra includes an internal evaluation engine with basic resource limits. However, when dealing with untrusted code, it is highly recommended to run the pipeline within an isolated environment (such as a container or sandbox) to prevent potential side effects or resource exhaustion.

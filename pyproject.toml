@@ -12,3 +12,10 @@ dependencies = [
     "xdis>=6.1.8",
     "zstd>=1.5.7.3",
 ]
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.8",
+]

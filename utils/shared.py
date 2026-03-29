@@ -1,4 +1,4 @@
-from types import FunctionType, MethodType
+from typing import Callable, Any
 import binascii
 import operator
 import base64
@@ -13,27 +13,27 @@ import bz2
 import ast
 
 
-ATTR = {
-    'decode': bytes.decode,
-    'encode': str.encode,
-    'hex': bytes.hex,
-    'join': str.join,
-    'isalpha': str.isalpha,
-    'isdigit': str.isdigit,
-    'isupper': str.isupper,
+ATTR: dict[str, Callable] = {
+    "decode": bytes.decode,
+    "encode": str.encode,
+    "hex": bytes.hex,
+    "join": str.join,
+    "isalpha": str.isalpha,
+    "isdigit": str.isdigit,
+    "isupper": str.isupper,
 }
 
-FUNCS = {
-    'ord': ord,
-    'chr': chr,
-    'hex': hex,
-    'int': int,
-    'float': float,
-    'str': str,
-    'bytes': bytes
+FUNCS: dict[str, Callable] = {
+    "ord": ord,
+    "chr": chr,
+    "hex": hex,
+    "int": int,
+    "float": float,
+    "str": str,
+    "bytes": bytes,
 }
 
-OPS = {
+OPS: dict[Any, Callable] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
     ast.Mult: operator.mul,
@@ -58,42 +58,22 @@ OPS = {
     ast.USub: operator.neg,
 }
 
-encoding: dict[str, dict[str, FunctionType | MethodType]] = {
-    'base64': {
-        'b16decode': base64.b16decode,
-        'b32decode': base64.b32decode,
-        'b64decode': base64.b64decode,
-        'b85decode': base64.b85decode,
-        'a85decode': base64.a85decode
+encoding: dict[str, dict[str, Callable[..., bytes]]] = {
+    "base64": {
+        "b16decode": base64.b16decode,
+        "b32decode": base64.b32decode,
+        "b64decode": base64.b64decode,
+        "b85decode": base64.b85decode,
+        "a85decode": base64.a85decode,
     },
-    'zlib': {
-        'decompress': zlib.decompress
-    },
-    'gzip': {
-        'decompress': gzip.decompress
-    },
-    'lzma': {
-        'decompress': lzma.decompress
-    },
-    'bz2': {
-        'decompress': bz2.decompress
-    },
-    'brotli': {
-        'decompress': brotli.decompress
-    },
-    'zstd': {
-        'decompress': zstd.decompress
-    },
-    'blosc': {
-        'decompress': blosc.decompress
-    },
-    'bytes': {
-        'fromhex': bytes.fromhex
-    },
-    'binascii': {
-        'unhexlify': binascii.unhexlify
-    },
-    'codecs': {
-        'decode': codecs.decode
-    }
+    "zlib": {"decompress": zlib.decompress},
+    "gzip": {"decompress": gzip.decompress},
+    "lzma": {"decompress": lzma.decompress},
+    "bz2": {"decompress": bz2.decompress},
+    "brotli": {"decompress": brotli.decompress},
+    "zstd": {"decompress": zstd.decompress},
+    "blosc": {"decompress": blosc.decompress},
+    "bytes": {"fromhex": bytes.fromhex},
+    "binascii": {"unhexlify": binascii.unhexlify},
+    "codecs": {"decode": codecs.decode},
 }

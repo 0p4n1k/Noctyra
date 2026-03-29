@@ -5,5 +5,11 @@ from .attributes import BasicAttributes
 from .listcomp import LCTransformer
 from .condsimplifier import ConditionSimplifier
 
-__all__ = ["ConstsTransformer", "TransformerPipeline", "BasicFunctions", "BasicAttributes", "LCTransformer", "ConditionSimplifier"]
-
+__all__ = [
+    "ConstsTransformer",
+    "TransformerPipeline",
+    "BasicFunctions",
+    "BasicAttributes",
+    "LCTransformer",
+    "ConditionSimplifier",
+]

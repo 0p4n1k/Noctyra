@@ -4,9 +4,7 @@ from utils.logger import LOGGER
 import ast
 
 
-
 class ConditionSimplifier(ast.NodeTransformer):
-
     def visit_Compare(self, node: ast.Compare):
 
         left = safe_eval(node.left)

@@ -4,7 +4,6 @@ from utils.logger import LOGGER
 import ast
 
 
-
 class BasicAttributes(ast.NodeTransformer):
     def visit_Call(self, node):
         self.generic_visit(node)
@@ -18,7 +17,6 @@ class BasicAttributes(ast.NodeTransformer):
             value = safe_eval(node.func.value)
 
             if value is not None:
-
                 args = [safe_eval(arg) for arg in node.args]
 
                 if any(arg is None for arg in args):
@@ -26,7 +24,9 @@ class BasicAttributes(ast.NodeTransformer):
 
                 try:
                     result = getattr(value, attr_name)(*args)
-                    LOGGER.debug(f"Resolved attribute call: {type(value).__name__}.{attr_name} -> {result!r}")
+                    LOGGER.debug(
+                        f"Resolved attribute call: {type(value).__name__}.{attr_name} -> {result!r}"
+                    )
                     return ast.Constant(value=result)
 
                 except Exception as e:

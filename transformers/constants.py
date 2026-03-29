@@ -4,10 +4,7 @@ from utils.logger import LOGGER
 import ast
 
 
-
-class ConstsTransformer(ast.NodeTransformer): 
-
-
+class ConstsTransformer(ast.NodeTransformer):
     def get_module_name(self, node):
         if isinstance(node, ast.Name):
             return node.id
@@ -22,7 +19,6 @@ class ConstsTransformer(ast.NodeTransformer):
         if result is not None:
             LOGGER.debug(f"Folded BinOp into constant: {result!r}")
             return ast.Constant(value=result)
-
 
         return node
 
@@ -42,10 +38,11 @@ class ConstsTransformer(ast.NodeTransformer):
 
                 try:
                     result = func(*args)
-                    LOGGER.debug(f"Resolved encoding call: {module_name}.{func_name} -> {result!r}")
-                    return ast.Constant(value=result) #type: ignore
+                    LOGGER.debug(
+                        f"Resolved encoding call: {module_name}.{func_name} -> {result!r}"
+                    )
+                    return ast.Constant(value=result)  # type: ignore
                 except Exception as e:
                     LOGGER.debug(f"Failed to resolve encoding call: {e}")
-
 
         return node

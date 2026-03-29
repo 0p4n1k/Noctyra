@@ -6,15 +6,15 @@ import ast
 MAX_ALLOCATION = 100_000
 MAX_INT = 100_000_000
 
+
 class SafeEval(ast.NodeVisitor):
-    
     def __init__(self, known_vars: dict | None = None) -> None:
         super().__init__()
         self.known_vars = known_vars or {}
-    
+
     def get_name(self, name: str):
         return self.known_vars.get(name)
-    
+
     def check_size(self, obj):
         if isinstance(obj, (str, bytes, list, dict, set)):
             if len(obj) > MAX_ALLOCATION:
@@ -26,63 +26,70 @@ class SafeEval(ast.NodeVisitor):
                 return True
         return False
 
-    
     def visit(self, node):
-        method = 'visit_' + node.__class__.__name__
+        method = "visit_" + node.__class__.__name__
         visitor = getattr(self, method, self.generic_visit)
-        
+
         if visitor == self.generic_visit:
             return None
-        
+
         return visitor(node)
-    
+
     def visit_BinOp(self, node):
-        left = self.visit(node.left)      
+        left = self.visit(node.left)
         right = self.visit(node.right)
-        
+
         if right is None or left is None:
             return None
-        
+
         op = OPS.get(type(node.op))
-        
+
         if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and right == 0:
             return None
-        
-        if isinstance(left, (list, dict, set, str, bytes, int)) and isinstance(right, int) and op in (operator.mul, operator.pow):
-            try:
 
-                if self.check_size(right): # type: ignore
+        if (
+            isinstance(left, (list, dict, set, str, bytes, int))
+            and isinstance(right, int)
+            and op in (operator.mul, operator.pow)
+        ):
+            try:
+                if self.check_size(right):  # type: ignore
                     return None
-                
+
             except Exception:
                 return None
-        
+
         if op is None:
             return None
-        
+
         try:
             res = op(left, right)
-            LOGGER.debug(f"BinOp: {left!r} {type(node.op).__name__} {right!r} -> {res!r}")
+            LOGGER.debug(
+                f"BinOp: {left!r} {type(node.op).__name__} {right!r} -> {res!r}"
+            )
             return res
         except Exception as e:
             LOGGER.debug(f"BinOp failed: {e}")
             return None
-    
+
     def visit_BoolOp(self, node: ast.BoolOp):
-        return all(self.visit(value) for value in node.values) if isinstance(node.op, ast.And) else any(self.visit(value) for value in node.values)
-    
+        return (
+            all(self.visit(value) for value in node.values)
+            if isinstance(node.op, ast.And)
+            else any(self.visit(value) for value in node.values)
+        )
+
     def visit_Call(self, node: ast.Call):
-        
-        
+
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
             if func_name in FUNCS:
                 func = FUNCS[func_name]
-                
+
                 args = [self.visit(arg) for arg in node.args]
                 if any(arg is None for arg in args):
                     return None
-                
+
                 try:
                     res = func(*args)
                     LOGGER.debug(f"Call {func_name}({args}) -> {res!r}")
@@ -90,11 +97,10 @@ class SafeEval(ast.NodeVisitor):
                 except Exception as e:
                     LOGGER.debug(f"Call {func_name} failed: {e}")
                     return None
-            
+
         if isinstance(node.func, ast.Attribute):
-            
             attr_name = node.func.attr
-            
+
             if attr_name in ATTR:
                 value = self.visit(node.func.value)
 
@@ -102,41 +108,48 @@ class SafeEval(ast.NodeVisitor):
                     attr_value = ATTR[attr_name]
                     try:
                         result = attr_value(value)
-                        LOGGER.debug(f"Attr call: {type(value).__name__}.{attr_name} -> {result!r}")
+                        LOGGER.debug(
+                            f"Attr call: {type(value).__name__}.{attr_name} -> {result!r}"
+                        )
                         return result
-                    
+
                     except Exception as e:
                         LOGGER.debug(f"Attr call {attr_name} failed: {e}")
                         pass
-        
+
         return None
-    
+
     def visit_Constant(self, node: ast.Constant):
         return node.value
-    
+
     def visit_Name(self, node: ast.Name):
         return self.get_name(node.id)
-    
+
     def visit_List(self, node: ast.List):
         return [self.visit(elt) for elt in node.elts]
-    
+
     def visit_IfExp(self, node: ast.IfExp):
 
         cond = self.visit(node.test)
 
         if cond is None:
             return None
-        
+
         result = self.visit(node.body) if cond else self.visit(node.orelse)
         return result
-    
+
     def visit_Compare(self, node: ast.Compare):
-        
-        result = all(OPS.get(type(op), lambda a, b: None)(self.visit(node.left), self.visit(node.comparators[i])) for i, op in enumerate(node.ops))
+
+        result = all(
+            OPS.get(type(op), lambda a, b: None)(
+                self.visit(node.left), self.visit(node.comparators[i])
+            )
+            for i, op in enumerate(node.ops)
+        )
 
         return result
-    
-    
+
+
 def safe_eval(node: ast.AST, known_vars: dict | None = None):
-    
+
     return SafeEval(known_vars).visit(node)
