@@ -7,7 +7,7 @@ import ast
 
 class BasicFunctions(ast.NodeTransformer):
 
-    def visit_Expr(self, node: ast.Expr) -> ast.Any:
+    def visit_Expr(self, node: ast.Expr):
 
         if isinstance(node.value, ast.Call):
             if isinstance(node.value.func, ast.Name):
@@ -20,7 +20,7 @@ class BasicFunctions(ast.NodeTransformer):
 
                     if len(args) == 1:
                         LOGGER.debug(f"Unrolling exec() call")
-                        return ast.parse(args[0]).body
+                        return ast.parse(args[0]).body #type: ignore
 
         return node
 
