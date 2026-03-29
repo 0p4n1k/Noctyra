@@ -9,7 +9,6 @@ dependencies = [
     "blosc>=1.11.4",
     "brotli>=1.2.0",
     "rich>=14.3.3",
-    "xdis>=6.1.8",
     "zstd>=1.5.7.3",
 ]
 

@@ -182,7 +182,6 @@ dependencies = [
     { name = "blosc" },
     { name = "brotli" },
     { name = "rich" },
-    { name = "xdis" },
     { name = "zstd" },
 ]
 
@@ -199,7 +198,6 @@ requires-dist = [
     { name = "blosc", specifier = ">=1.11.4" },
     { name = "brotli", specifier = ">=1.2.0" },
     { name = "rich", specifier = ">=14.3.3" },
-    { name = "xdis", specifier = ">=6.1.8" },
     { name = "zstd", specifier = ">=1.5.7.3" },
 ]
 
@@ -329,41 +327,12 @@ wheels = [
 ]
 
 [[package]]
-name = "six"
-version = "1.17.0"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
-]
-
-[[package]]
 name = "typing-extensions"
 version = "4.15.0"
 source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/72/94/1a15dd82efb362ac84269196e94cf00f187f7ed21c242792a923cdb1c61f/typing_extensions-4.15.0.tar.gz", hash = "sha256:0cea48d173cc12fa28ecabc3b837ea3cf6f38c6d1136f85cbaaf598984861466", size = 109391, upload-time = "2025-08-25T13:49:26.313Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/18/67/36e9267722cc04a6b9f15c7f3441c2363321a3ea07da7ae0c0707beb2a9c/typing_extensions-4.15.0-py3-none-any.whl", hash = "sha256:f0fa19c6845758ab08074a0cfa8b7aecb71c999ca73d62883bc25cc018c4e548", size = 44614, upload-time = "2025-08-25T13:49:24.86Z" },
-]
-
-[[package]]
-name = "xdis"
-version = "6.1.8"
-source = { registry = "https://pypi.org/simple" }
-dependencies = [
-    { name = "click" },
-    { name = "six" },
-]
-sdist = { url = "https://files.pythonhosted.org/packages/31/53/40c259fba51acb5ae83a0ecee4aa0837c57d2fa0e29bd7391fe041bfee7f/xdis-6.1.8.tar.gz", hash = "sha256:a070c390f814395d672a8732b8b5e8e09cdeeaac1b32497e8061c24f126f6d69", size = 630484, upload-time = "2025-10-17T17:17:30.278Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/ae/e7/9f12bf8e8caab1845a2895df536e30c9cd5a86bf30d655a86bb97aa60686/xdis-6.1.8-py310-none-any.whl", hash = "sha256:b91a784627f18154e2607784ceafdc78b32f5ee235fa33d2ee1b0d00c89edf27", size = 216062, upload-time = "2025-10-17T17:17:19.359Z" },
-    { url = "https://files.pythonhosted.org/packages/bf/78/1f5fc383b13574759093ee56e3b3f06993055d7c59afb20097adfa51ecda/xdis-6.1.8-py311-none-any.whl", hash = "sha256:33c297a0951f3b81de62f27169607a9e1d2b560d488ef4cb6cecc119cfb72ded", size = 197851, upload-time = "2025-10-17T17:17:21.211Z" },
-    { url = "https://files.pythonhosted.org/packages/cf/2b/b23e4de209a60d4b9ed177d232d5cf4924fb4e1f1525d500b5b5658cfdbc/xdis-6.1.8-py312-none-any.whl", hash = "sha256:0e5579fd715a1df6bc2e1e828879d8751d16910eae967d0f4f518cad4f0723ba", size = 197851, upload-time = "2025-10-17T17:17:22.555Z" },
-    { url = "https://files.pythonhosted.org/packages/5a/6c/7f36fe7cc1ef91bae777d63fadc14ccd0116520ede93b268dc3b3dcd6a3a/xdis-6.1.8-py313-none-any.whl", hash = "sha256:496349d62623a8bb77b33c44dfcf68860c1d1db5b43d7f729a241c73168d3e8f", size = 197851, upload-time = "2025-10-17T17:17:23.878Z" },
-    { url = "https://files.pythonhosted.org/packages/3a/01/2d0c948362bb7c3e0fc689aef67884fe3c3053a22a15cee269bc708e1881/xdis-6.1.8-py36-none-any.whl", hash = "sha256:255c5a5f147c49c15a953afc8852b68e471a23897e5f8595949c1b581263606d", size = 215978, upload-time = "2025-10-17T17:17:24.88Z" },
-    { url = "https://files.pythonhosted.org/packages/8a/db/b1713ad464e8b8cc92fbbd06f9436bf5177e09b57f398b0adff349e391a6/xdis-6.1.8-py37-none-any.whl", hash = "sha256:d03ad44ee7a3faf3d75ff83498dee023f2da06fdabbe8252e29400ddbee405f2", size = 215976, upload-time = "2025-10-17T17:17:26.857Z" },
-    { url = "https://files.pythonhosted.org/packages/b4/a8/e3027198d980605a15ac77ffed7d5e20f7ad1b13f7a1d0b36b5532b6481d/xdis-6.1.8-py38-none-any.whl", hash = "sha256:e487b3a0a8631f3f74828d157acf68250fec0cbe383cddfacade3ae639281483", size = 215975, upload-time = "2025-10-17T17:17:27.832Z" },
-    { url = "https://files.pythonhosted.org/packages/7b/5b/d28d06672e059fc6480ddd85e1ec69f351a215250b43e82fafcaac1a665c/xdis-6.1.8-py39-none-any.whl", hash = "sha256:d52c6890646eed3b5f2cdfe93ee98da639286dcaa20ceb1fbef6e05c3600da12", size = 216062, upload-time = "2025-10-17T17:17:29.22Z" },
 ]
 
 [[package]]
