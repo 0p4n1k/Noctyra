@@ -1,5 +1,7 @@
 # Noctyra
 
+![Noctyra Demo](assets/demo.gif)
+
 ![Python Version](https://img.shields.io/badge/python-3.14%2B-blue)
 ![Status](https://img.shields.io/badge/status-experimental-orange)
 
