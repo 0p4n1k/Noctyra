@@ -4,7 +4,6 @@ import operator
 import ast
 
 MAX_ALLOCATION = 100_000
-MAX_INT = 100_000_000
 
 
 class SafeEval(ast.NodeVisitor):
@@ -21,7 +20,7 @@ class SafeEval(ast.NodeVisitor):
                 LOGGER.debug(f"Size limit exceeded for {type(obj).__name__}")
                 return True
         elif isinstance(obj, (int, float)):
-            if obj > MAX_INT or obj < -MAX_INT:
+            if obj > MAX_ALLOCATION or obj < -MAX_ALLOCATION:
                 LOGGER.debug(f"Numeric limit exceeded for {type(obj).__name__}")
                 return True
         return False

@@ -12,7 +12,6 @@ import lzma
 import bz2
 import ast
 
-
 ATTR: dict[str, Callable] = {
     "decode": bytes.decode,
     "encode": str.encode,
