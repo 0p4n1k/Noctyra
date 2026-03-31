@@ -1,4 +1,4 @@
-from transformers.safe_eval import safe_eval
+from transformers.safe_eval import safe_eval, MAX_ALLOCATION
 from utils.logger import LOGGER
 import ast
 
@@ -10,6 +10,12 @@ class LCTransformer(ast.NodeTransformer):
         iterable = safe_eval(node.generators[0].iter)
 
         if iterable is None:
+            return node
+
+        if len(iterable) > MAX_ALLOCATION:
+            LOGGER.debug(
+                f"Iterable size limit exceeded for list comprehension: {len(iterable)}"
+            )
             return node
 
         ifs = node.generators[0].ifs
@@ -50,6 +56,12 @@ class LCTransformer(ast.NodeTransformer):
         iterable = safe_eval(node.generators[0].iter)
 
         if iterable is None:
+            return node
+
+        if len(iterable) > MAX_ALLOCATION:
+            LOGGER.debug(
+                f"Iterable size limit exceeded for generator expression: {len(iterable)}"
+            )
             return node
 
         ifs = node.generators[0].ifs

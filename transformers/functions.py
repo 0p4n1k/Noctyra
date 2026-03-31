@@ -15,7 +15,7 @@ class BasicFunctions(ast.NodeTransformer):
                         return node
 
                     if len(args) == 1:
-                        LOGGER.debug("Unrolling exec() call")
+                        LOGGER.warning(f"Unrolling exec() call: {args[0]!r}")
                         return ast.parse(args[0]).body  # type: ignore
 
         return node

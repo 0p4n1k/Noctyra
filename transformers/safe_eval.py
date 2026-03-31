@@ -63,6 +63,8 @@ class SafeEval(ast.NodeVisitor):
 
         try:
             res = op(left, right)
+            if self.check_size(res):
+                return None
             LOGGER.debug(
                 f"BinOp: {left!r} {type(node.op).__name__} {right!r} -> {res!r}"
             )
@@ -72,11 +74,20 @@ class SafeEval(ast.NodeVisitor):
             return None
 
     def visit_BoolOp(self, node: ast.BoolOp):
-        return (
-            all(self.visit(value) for value in node.values)
-            if isinstance(node.op, ast.And)
-            else any(self.visit(value) for value in node.values)
-        )
+        if isinstance(node.op, ast.And):
+            result = None
+            for value in node.values:
+                result = self.visit(value)
+                if not result:
+                    return result
+            return result
+        else:
+            result = None
+            for value in node.values:
+                result = self.visit(value)
+                if result:
+                    return result
+            return result
 
     def visit_Call(self, node: ast.Call):
 
@@ -143,17 +154,25 @@ class SafeEval(ast.NodeVisitor):
             return None
 
         try:
-            result = all(
-                OPS.get(type(op), lambda a, b: None)(
-                    self.visit(node.left), self.visit(node.comparators[i])
-                )
-                for i, op in enumerate(node.ops)
-            )
+            left = self.visit(node.left)
+            if left is None:
+                return None
+
+            for i, op in enumerate(node.ops):
+                right = self.visit(node.comparators[i])
+                if right is None:
+                    return None
+                fn = OPS.get(type(op))
+                if fn is None:
+                    return None
+                if not fn(left, right):
+                    return False
+                left = right
+
+            return True
         except Exception as e:
             LOGGER.debug(f"Compare failed: {e}")
             return None
-
-        return result
 
 
 def safe_eval(node: ast.AST, known_vars: dict | None = None):

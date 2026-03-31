@@ -64,7 +64,9 @@ def test_safe_eval_limits():
     # Large allocation should NOT be folded
     code = "x = 'A' * 10**8"  # Increased to be sure it hits limit
     transformed = transform_code(code)
-    assert "10**8" in transformed or "100000000" in transformed
+    assert (
+        "10**8" in transformed or "10 ** 8" in transformed or "100000000" in transformed
+    )
     # If it was folded, transformed would be > 100MB.
     # Since it's NOT folded, it stays small.
     assert len(transformed) < 1000
