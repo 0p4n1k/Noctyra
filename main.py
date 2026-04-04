@@ -4,6 +4,8 @@ from transformers import (
     BasicAttributes,
     LCTransformer,
     ConditionSimplifier,
+    NameReplacer,
+    DeadCodeRemover,
 )
 from transformers import TransformerPipeline
 from utils.logger import LOGGER
@@ -36,6 +38,10 @@ def main():
         help="Output file for the transformed code. Default is out.py.",
     )
     argparser.add_argument("--debug", action="store_true", help="Enable debug logging.")
+    argparser.add_argument(
+        "--stdout", action="store_true", help="Output transformed code to stdout."
+    )
+
     args = argparser.parse_args()
 
     if args.debug:
@@ -53,6 +59,8 @@ def main():
             BasicAttributes,
             LCTransformer,
             ConditionSimplifier,
+            NameReplacer,
+            DeadCodeRemover,
         ],
         iterations=args.iterations,
     )
@@ -67,6 +75,9 @@ def main():
         f.write(res)
 
     LOGGER.debug(f"Output written to {args.output}")
+
+    if args.stdout:
+        print(res)
 
 
 if __name__ == "__main__":

@@ -20,6 +20,8 @@ ATTR: dict[str, Callable] = {
     "isalpha": str.isalpha,
     "isdigit": str.isdigit,
     "isupper": str.isupper,
+    "upper": str.upper,
+    "lower": str.lower,
 }
 
 FUNCS: dict[str, Callable] = {
@@ -55,6 +57,7 @@ OPS: dict[Any, Callable] = {
     ast.Mod: operator.mod,
     ast.UnaryOp: operator.neg,
     ast.USub: operator.neg,
+    ast.FloorDiv: operator.floordiv,
 }
 
 encoding: dict[str, dict[str, Callable[..., bytes]]] = {
