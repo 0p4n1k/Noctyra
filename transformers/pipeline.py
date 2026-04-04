@@ -1,5 +1,6 @@
 from utils.logger import LOGGER
 from typing import List, Type
+from classes import Context
 import ast
 
 
@@ -17,26 +18,26 @@ class TransformerPipeline(ast.NodeTransformer):
             f"Initialized TransformerPipeline with {len(self.transformers)} transformers and {self.iterations if self.iterations > 0 else 'auto'} iterations."
         )
 
+    def run_transformer(
+        self, transformer: ast.NodeTransformer, node: ast.AST, ctx: Context
+    ) -> ast.AST:
+
+        return getattr(transformer, "run", (lambda node, _: transformer.visit(node)))(
+            node, ctx
+        )
+
     def visit(self, node):
 
         current_node = node
-        for _ in range(self.iterations):
-            for transformer in self.transformers:
-                new_node = transformer.visit(current_node)
-
-                if new_node != current_node:
-                    current_node = new_node
-
-            LOGGER.info(
-                f"Completed iteration {_ + 1}/{self.iterations}, size of node: {len(ast.dump(current_node))}"
-            )
 
         if self.iterations == 0:
             last_size = len(ast.dump(current_node))
             cur = 1
             while True:
                 for transformer in self.transformers:
-                    new_node = transformer.visit(current_node)
+                    ctx = Context.from_tree(current_node)
+
+                    new_node = self.run_transformer(transformer, current_node, ctx)
 
                     if new_node != current_node:
                         current_node = new_node
@@ -53,5 +54,17 @@ class TransformerPipeline(ast.NodeTransformer):
                         f"Reached maximum iterations ({self.max_iterations}). Stopping."
                     )
                     break
+        else:
+            for _ in range(self.iterations):
+                for transformer in self.transformers:
+                    ctx = Context.from_tree(current_node)
+                    new_node = self.run_transformer(transformer, current_node, ctx)
+
+                    if new_node != current_node:
+                        current_node = new_node
+
+                LOGGER.info(
+                    f"Completed iteration {_ + 1}/{self.iterations}, size of node: {len(ast.dump(current_node))}"
+                )
 
         return current_node
