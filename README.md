@@ -67,4 +67,3 @@ Automated checks are performed on every push via GitHub Actions, including linti
 Noctyra includes an internal evaluation engine with basic resource limits. However, when dealing with untrusted code, it is highly recommended to run the pipeline within an isolated environment (such as a container or sandbox) to prevent potential side effects or resource exhaustion.
 
 ---
-*Readme.md Maintained by Gemini CLI and Me*
