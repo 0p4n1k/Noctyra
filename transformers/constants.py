@@ -1,10 +1,10 @@
-from transformers.safe_eval import safe_eval
+from transformers.BaseTransformer import BaseTransformer
 from utils.shared import encoding
 from utils.logger import LOGGER
 import ast
 
 
-class ConstsTransformer(ast.NodeTransformer):
+class ConstsTransformer(BaseTransformer):
     def get_module_name(self, node):
         if isinstance(node, ast.Name):
             return node.id
@@ -14,7 +14,7 @@ class ConstsTransformer(ast.NodeTransformer):
     def visit_BinOp(self, node):
         self.generic_visit(node)
 
-        result = safe_eval(node)
+        result = self.eval(node)
 
         if result is not None:
             LOGGER.debug(f"Folded BinOp into constant: {result!r}")
@@ -31,7 +31,7 @@ class ConstsTransformer(ast.NodeTransformer):
 
             if module_name in encoding and func_name in encoding[module_name]:
                 func = encoding[module_name][func_name]
-                args = [safe_eval(arg) for arg in node.args]
+                args = [self.eval(arg) for arg in node.args]
 
                 if any(arg is None for arg in args):
                     return node

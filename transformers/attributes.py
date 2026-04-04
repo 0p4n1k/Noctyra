@@ -1,10 +1,10 @@
-from transformers.safe_eval import safe_eval
+from transformers.BaseTransformer import BaseTransformer
 from utils.shared import ATTR
 from utils.logger import LOGGER
 import ast
 
 
-class BasicAttributes(ast.NodeTransformer):
+class BasicAttributes(BaseTransformer):
     def visit_Call(self, node):
         self.generic_visit(node)
 
@@ -14,10 +14,10 @@ class BasicAttributes(ast.NodeTransformer):
         attr_name = node.func.attr
 
         if attr_name in ATTR:
-            value = safe_eval(node.func.value)
+            value = self.eval(node.func.value)
 
             if value is not None:
-                args = [safe_eval(arg) for arg in node.args]
+                args = [self.eval(arg) for arg in node.args]
 
                 if any(arg is None for arg in args):
                     return node

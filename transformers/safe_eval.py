@@ -1,5 +1,7 @@
 from utils.shared import ATTR, OPS, FUNCS
 from utils.logger import LOGGER
+from classes import Context
+from typing import Any
 import operator
 import ast
 
@@ -7,12 +9,8 @@ MAX_ALLOCATION = 100_000
 
 
 class SafeEval(ast.NodeVisitor):
-    def __init__(self, known_vars: dict | None = None) -> None:
-        super().__init__()
-        self.known_vars = known_vars or {}
-
-    def get_name(self, name: str):
-        return self.known_vars.get(name)
+    def __init__(self, ctx: Context | None = None) -> None:
+        self.ctx = ctx or Context()
 
     def check_size(self, obj):
         if isinstance(obj, (str, bytes, list, dict, set)):
@@ -133,7 +131,10 @@ class SafeEval(ast.NodeVisitor):
         return node.value
 
     def visit_Name(self, node: ast.Name):
-        return self.get_name(node.id)
+        if (entry := self.ctx.get(node.id)) is not None:
+            return entry.get()
+
+        return None
 
     def visit_List(self, node: ast.List):
         return [self.visit(elt) for elt in node.elts]
@@ -162,9 +163,11 @@ class SafeEval(ast.NodeVisitor):
                 right = self.visit(node.comparators[i])
                 if right is None:
                     return None
+
                 fn = OPS.get(type(op))
                 if fn is None:
                     return None
+
                 if not fn(left, right):
                     return False
                 left = right
@@ -175,6 +178,6 @@ class SafeEval(ast.NodeVisitor):
             return None
 
 
-def safe_eval(node: ast.AST, known_vars: dict | None = None):
+def safe_eval(node: ast.AST, ctx: Context | None = None) -> None | Any:
 
-    return SafeEval(known_vars).visit(node)
+    return SafeEval(ctx).visit(node)
