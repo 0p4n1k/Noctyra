@@ -8,7 +8,6 @@ class ConditionSimplifier(BaseTransformer):
     def visit_Compare(self, node: ast.Compare):
 
         left = self.eval(node.left)
-
         if left is None:
             return node
 
@@ -35,5 +34,14 @@ class ConditionSimplifier(BaseTransformer):
             final_res = all(results)
             LOGGER.debug(f"Simplified comparison: {final_res}")
             return ast.Constant(value=final_res)
+
+        return node
+
+    def visit_IfExp(self, node: ast.IfExp):
+        return node
+        result = self.eval(node)
+
+        if result:
+            return result
 
         return node
