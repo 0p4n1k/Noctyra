@@ -1,6 +1,8 @@
 from typing import Callable, Any
 import binascii
 import operator
+import marshal
+import hashlib
 import base64
 import brotli
 import codecs
@@ -12,6 +14,8 @@ import lzma
 import bz2
 import ast
 
+h = hashlib.sha256()
+
 ATTR: dict[str, Callable] = {
     "decode": bytes.decode,
     "encode": str.encode,
@@ -19,9 +23,14 @@ ATTR: dict[str, Callable] = {
     "join": str.join,
     "isalpha": str.isalpha,
     "isdigit": str.isdigit,
+    "islower": str.islower,
     "isupper": str.isupper,
     "upper": str.upper,
     "lower": str.lower,
+    "split": str.split,
+    "strip": str.strip,
+    "startswith": str.startswith,
+    "hexdigest": lambda x: x,
 }
 
 FUNCS: dict[str, Callable] = {
@@ -78,4 +87,5 @@ encoding: dict[str, dict[str, Callable[..., bytes]]] = {
     "bytes": {"fromhex": bytes.fromhex},
     "binascii": {"unhexlify": binascii.unhexlify},
     "codecs": {"decode": codecs.decode},
+    "marshal": {"loads": marshal.loads},
 }
