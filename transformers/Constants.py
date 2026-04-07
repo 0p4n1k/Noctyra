@@ -46,3 +46,17 @@ class ConstsTransformer(BaseTransformer):
                     LOGGER.debug(f"Failed to resolve encoding call: {e}")
 
         return node
+
+    def visit_Subscript(self, node: ast.Subscript):
+        self.generic_visit(node)
+        value = self.eval(node.value)
+
+        if value is None:
+            return node
+
+        _slice = self.eval(node.slice)
+
+        if _slice is None:
+            return node
+
+        return ast.Constant(value=value[_slice])

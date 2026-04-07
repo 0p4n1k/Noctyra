@@ -87,14 +87,38 @@ class SafeEval(ast.NodeVisitor):
                     return result
             return result
 
+    def visit_Slice(self, node: ast.Slice):
+
+        lower = self.visit(node.lower)
+        upper = self.visit(node.upper)
+        step = self.visit(node.step)
+
+        return slice(lower, upper, step)
+
+    def visit_UnaryOp(self, node: ast.UnaryOp):
+
+        op = OPS.get(type(node.op))
+
+        if not op:
+            return None
+
+        operand = self.visit(node.operand)
+
+        if not operand:
+            return None
+
+        return op(operand)
+
     def visit_Call(self, node: ast.Call):
 
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
+
             if func_name in FUNCS:
                 func = FUNCS[func_name]
 
                 args = [self.visit(arg) for arg in node.args]
+
                 if any(arg is None for arg in args):
                     return None
 
@@ -147,6 +171,7 @@ class SafeEval(ast.NodeVisitor):
             return None
 
         result = self.visit(node.body) if cond else self.visit(node.orelse)
+
         return result
 
     def visit_Compare(self, node: ast.Compare):
