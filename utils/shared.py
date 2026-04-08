@@ -70,6 +70,7 @@ OPS: dict[Any, Callable] = {
     ast.UnaryOp: operator.neg,
     ast.USub: operator.neg,
     ast.FloorDiv: operator.floordiv,
+    ast.And: all,
 }
 
 ENCODING: dict[str, dict[str, Callable[..., bytes]]] = {
