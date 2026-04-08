@@ -5,8 +5,16 @@ import ast
 
 
 class ConditionSimplifier(BaseTransformer):
-    def visit_Compare(self, node: ast.Compare):
 
+    def visit_BoolOp(self, node: ast.BoolOp):
+        op = OPS.get(type(node.op))
+
+        if op is None:
+            return node
+
+        return ast.Constant(op([self.eval(arg) for arg in node.values]))
+
+    def visit_Compare(self, node: ast.Compare):
         left = self.eval(node.left)
         if left is None:
             return node
