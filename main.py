@@ -32,6 +32,18 @@ def main():
         help="Maximum iterations when using auto mode. Default is 100.",
     )
     argparser.add_argument(
+        "--max-depth",
+        type=int,
+        default=50,
+        help="Maximum depth when inspecting recursive function. Default is 50.",
+    )
+    argparser.add_argument(
+        "--max-allocation",
+        type=int,
+        default=100_000,
+        help="Maximum allocation to prevent DOS. Default is 100000.",
+    )
+    argparser.add_argument(
         "--output",
         type=str,
         default="out.py",
@@ -63,6 +75,9 @@ def main():
             DeadCodeRemover,
         ],
         iterations=args.iterations,
+        max_iterations=args.max_iterations,
+        max_depth=args.max_depth,
+        max_allocation=args.max_allocation,
     )
 
     result = pipeline.visit(tree)
