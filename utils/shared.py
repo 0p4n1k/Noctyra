@@ -41,6 +41,9 @@ FUNCS: dict[str, Callable] = {
     "float": float,
     "str": str,
     "bytes": bytes,
+    "map": map,
+    "list": list,
+    "pow": pow,
 }
 
 OPS: dict[Any, Callable] = {
@@ -69,7 +72,7 @@ OPS: dict[Any, Callable] = {
     ast.FloorDiv: operator.floordiv,
 }
 
-encoding: dict[str, dict[str, Callable[..., bytes]]] = {
+ENCODING: dict[str, dict[str, Callable[..., bytes]]] = {
     "base64": {
         "b16decode": base64.b16decode,
         "b32decode": base64.b32decode,
