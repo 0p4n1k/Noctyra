@@ -1,15 +1,10 @@
-from transformers.safe_eval import MAX_ALLOCATION
 from transformers.BaseTransformer import BaseTransformer
 from utils.logger import LOGGER
 from classes import Variable
-from classes import Context
 import ast
 
 
 class LCTransformer(BaseTransformer):
-    def run(self, node, ctx: Context):
-        self.ctx = ctx
-        return self.visit(node)
 
     def visit_ListComp(self, node):
         self.generic_visit(node)
@@ -17,11 +12,6 @@ class LCTransformer(BaseTransformer):
         iterable = self.eval(node.generators[0].iter)
 
         if not isinstance(iterable, (list, tuple, str, bytes, range)):
-            return node
-        if len(iterable) > MAX_ALLOCATION:
-            LOGGER.debug(
-                f"Iterable size limit exceeded for list comprehension: {len(iterable)}"
-            )
             return node
 
         ifs = node.generators[0].ifs
@@ -67,12 +57,6 @@ class LCTransformer(BaseTransformer):
         iterable = self.eval(node.generators[0].iter)
 
         if not isinstance(iterable, (list, tuple, str, bytes, range)):
-            return node
-
-        if len(iterable) > MAX_ALLOCATION:
-            LOGGER.debug(
-                f"Iterable size limit exceeded for generator expression: {len(iterable)}"
-            )
             return node
 
         ifs = node.generators[0].ifs

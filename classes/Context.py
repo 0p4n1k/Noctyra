@@ -1,4 +1,5 @@
-from classes.variable import Variable
+from .Function import CustomFunction
+from .Variable import Variable, supported_types
 import ast
 
 
@@ -51,14 +52,17 @@ class Context:
 
                     if not all(isinstance(t, ast.Name) for t in targets):
                         continue
+                    if isinstance(node.value, ast.Lambda):
+                        value = CustomFunction(node.value.body, node.value.args)
 
-                    value = ast.literal_eval(node.value)
-                    if isinstance(
-                        value, (int, float, str, bool, bytes, list, dict, set)
-                    ):
+                    else:
+                        value = ast.literal_eval(node.value)
+
+                    if isinstance(value, supported_types):
                         for target in targets:
                             if isinstance(target, ast.Name):
                                 ctx.set(target.id, value)
+
                 except ValueError:
                     pass
 

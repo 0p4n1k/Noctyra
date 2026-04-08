@@ -1,4 +1,5 @@
 from transformers.BaseTransformer import BaseTransformer
+from classes import CustomFunction
 from utils.logger import LOGGER
 import ast
 
@@ -11,7 +12,7 @@ class NameReplacer(BaseTransformer):
             return node
 
         result = self.eval(node)
-        if result is not None:
+        if result is not None and not isinstance(result, CustomFunction):
             LOGGER.debug(f"Resolved variable: {node.id} -> {result!r}")
             return ast.Constant(value=result)
 

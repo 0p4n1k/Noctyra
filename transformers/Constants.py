@@ -1,5 +1,4 @@
 from transformers.BaseTransformer import BaseTransformer
-from utils.shared import encoding
 from utils.logger import LOGGER
 import ast
 
@@ -25,38 +24,19 @@ class ConstsTransformer(BaseTransformer):
     def visit_Call(self, node: ast.Call):
         self.generic_visit(node)
 
-        if isinstance(node.func, ast.Attribute):
-            func_name = node.func.attr
-            module_name = self.get_module_name(node.func.value)
+        result = self.eval(node)
 
-            if module_name in encoding and func_name in encoding[module_name]:
-                func = encoding[module_name][func_name]
-                args = [self.eval(arg) for arg in node.args]
+        if result is None:
+            return node
 
-                if any(arg is None for arg in args):
-                    return node
-
-                try:
-                    result = func(*args)
-                    LOGGER.debug(
-                        f"Resolved encoding call: {module_name}.{func_name} -> {result!r}"
-                    )
-                    return ast.Constant(value=result)  # type: ignore
-                except Exception as e:
-                    LOGGER.debug(f"Failed to resolve encoding call: {e}")
-
-        return node
+        return ast.Constant(result)
 
     def visit_Subscript(self, node: ast.Subscript):
         self.generic_visit(node)
-        value = self.eval(node.value)
 
-        if value is None:
+        result = self.eval(node)
+
+        if result is None:
             return node
 
-        _slice = self.eval(node.slice)
-
-        if _slice is None:
-            return node
-
-        return ast.Constant(value=value[_slice])
+        return ast.Constant(result)

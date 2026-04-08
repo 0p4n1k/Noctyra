@@ -10,10 +10,14 @@ class TransformerPipeline(ast.NodeTransformer):
         transformers: List[Type[ast.NodeTransformer]],
         iterations: int = 0,
         max_iterations: int = 100,
+        max_depth: int = 50,
+        max_allocation: int = 100_000,
     ):
         self.transformers = [t() for t in transformers]
         self.iterations = iterations
         self.max_iterations = max_iterations
+        self.max_allocation = max_allocation
+        self.max_depth = max_depth
         LOGGER.info(
             f"Initialized TransformerPipeline with {len(self.transformers)} transformers and {self.iterations if self.iterations > 0 else 'auto'} iterations."
         )
@@ -22,9 +26,11 @@ class TransformerPipeline(ast.NodeTransformer):
         self, transformer: ast.NodeTransformer, node: ast.AST, ctx: Context
     ) -> ast.AST:
 
-        return getattr(transformer, "run", (lambda node, _: transformer.visit(node)))(
-            node, ctx
-        )
+        return getattr(
+            transformer,
+            "run",
+            (lambda node, ctx, max_depth, max_allocation: transformer.visit(node)),
+        )(node, ctx, self.max_depth, self.max_allocation)
 
     def visit(self, node):
 

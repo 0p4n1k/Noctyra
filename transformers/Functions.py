@@ -5,6 +5,7 @@ import ast
 
 class BasicFunctions(BaseTransformer):
     def visit_Expr(self, node: ast.Expr):
+        self.generic_visit(node)
 
         if isinstance(node.value, ast.Call):
             if isinstance(node.value.func, ast.Name):

@@ -38,10 +38,10 @@ class ConditionSimplifier(BaseTransformer):
         return node
 
     def visit_IfExp(self, node: ast.IfExp):
-        return node
+
         result = self.eval(node)
 
         if result:
-            return result
+            return ast.Constant(value=result)
 
         return node

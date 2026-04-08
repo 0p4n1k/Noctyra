@@ -7,12 +7,25 @@ class BaseTransformer(ast.NodeTransformer):
     def __init__(self) -> None:
         self.ctx: Context = Context()
 
-    def run(self, node: ast.AST, ctx: Context) -> ast.AST:
+    def run(
+        self,
+        node: ast.AST,
+        ctx: Context,
+        max_depth: int = 50,
+        max_allocation: int = 100_000,
+    ) -> ast.AST:
         self.ctx = ctx
+        self.max_depth = max_depth
+        self.max_allocation = max_allocation
         return self.visit(node)
 
     def eval(self, node: ast.expr, ctx: Context | None = None):
-        return safe_eval(node, ctx=ctx or self.ctx)
+        return safe_eval(
+            node,
+            ctx=ctx or self.ctx,
+            max_depth=self.max_depth,
+            max_allocation=self.max_allocation,
+        )
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
         parent_ctx = self.ctx
