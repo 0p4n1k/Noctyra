@@ -35,7 +35,7 @@ Repository = "https://github.com/0p4n1k/Noctyra"
 Issues = "https://github.com/0p4n1k/Noctyra/issues"
 
 [project.scripts]
-noctyra = "noctyra.main:main"
+noctyra = "noctyra.__main__:main"
 
 [build-system]
 requires = ["hatchling"]
