@@ -64,7 +64,6 @@ def main():
 
     tree = ast.parse(code)
 
-    print(ast.dump(tree, indent=4))
 
     pipeline = TransformerPipeline(
         transformers=[
