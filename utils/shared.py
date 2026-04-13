@@ -44,6 +44,8 @@ FUNCS: dict[str, Callable] = {
     "map": map,
     "list": list,
     "pow": pow,
+    "zip": zip,
+    "all": all,
 }
 
 OPS: dict[Any, Callable] = {
@@ -71,6 +73,8 @@ OPS: dict[Any, Callable] = {
     ast.USub: operator.neg,
     ast.FloorDiv: operator.floordiv,
     ast.And: all,
+    ast.BitAnd: lambda x, y: x & y,
+    ast.BitOr: lambda x, y: x | y,
 }
 
 ENCODING: dict[str, dict[str, Callable[..., bytes]]] = {

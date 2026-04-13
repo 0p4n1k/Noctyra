@@ -44,3 +44,12 @@ class BaseTransformer(ast.NodeTransformer):
 
         self.ctx = parent_ctx
         return node
+
+    def visit_ClassDef(self, node: ast.ClassDef):
+        parent_ctx = self.ctx
+
+        self.ctx = Context.from_tree(node)
+        self.generic_visit(node)
+
+        self.ctx = parent_ctx
+        return node

@@ -64,7 +64,6 @@ def main():
 
     tree = ast.parse(code)
 
-
     pipeline = TransformerPipeline(
         transformers=[
             ConstsTransformer,

@@ -61,8 +61,9 @@ class SafeEval(ast.NodeVisitor):
 
         return False
 
-    def visit(self, node):
-        if self.depth >= self.max_depth:
+    def visit(self, node: ast.AST | None):
+
+        if self.depth >= self.max_depth or node is None:
             LOGGER.debug("Max recursion depth reached")
             return None
 
@@ -95,6 +96,7 @@ class SafeEval(ast.NodeVisitor):
                 return None
 
         if op is None:
+            LOGGER.debug(f"Unsupported op: {type(node.op)}")
             return None
 
         try:
@@ -203,6 +205,10 @@ class SafeEval(ast.NodeVisitor):
                     ):
                         return [self.exec_custom_func(fn, [x]) for x in arg]
 
+                elif func is zip:
+                    if all(i is not None for i in args):
+                        return list(zip(*args))
+
                 else:
 
                     try:
@@ -304,6 +310,18 @@ class SafeEval(ast.NodeVisitor):
 
     def visit_List(self, node: ast.List):
         res = [self.visit(elt) for elt in node.elts]
+        if any(v is None for v in res):
+            return None
+        return res
+
+    def visit_Set(self, node: ast.Set):
+        res = set([self.visit(elt) for elt in node.elts])
+        if any(v is None for v in res):
+            return None
+        return res
+
+    def visit_Tuple(self, node: ast.Tuple):
+        res = tuple([self.visit(elt) for elt in node.elts])
         if any(v is None for v in res):
             return None
         return res
