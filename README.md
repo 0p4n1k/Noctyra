@@ -2,8 +2,10 @@
 
 ![Noctyra Demo](assets/demo.gif)
 
-![Python Version](https://img.shields.io/badge/python-3.14%2B-blue)
-![Status](https://img.shields.io/badge/status-experimental-orange)
+[![PyPI version](https://img.shields.io/pypi/v/noctyra)](https://pypi.org/project/noctyra/)
+[![Python versions](https://img.shields.io/pypi/pyversions/noctyra)](https://pypi.org/project/noctyra/)
+[![Downloads](https://img.shields.io/pypi/dm/noctyra)](https://pypi.org/project/noctyra/)
+[![License](https://img.shields.io/pypi/l/noctyra)](https://pypi.org/project/noctyra/)
 
 Noctyra is an AST-based framework designed for code transformation and deobfuscation. It provides a modular pipeline to analyze and simplify Python source code by resolving complex expressions and logic.
 

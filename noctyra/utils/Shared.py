@@ -46,6 +46,7 @@ FUNCS: dict[str, Callable] = {
     "pow": pow,
     "zip": zip,
     "all": all,
+    "round": round
 }
 
 OPS: dict[Any, Callable] = {
