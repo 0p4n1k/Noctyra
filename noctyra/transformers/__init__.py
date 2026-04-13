@@ -1,5 +1,4 @@
 from .Constants import ConstsTransformer
-from .Pipeline import TransformerPipeline
 from .Functions import BasicFunctions
 from .Attributes import BasicAttributes
 from .ListComp import LCTransformer
@@ -9,7 +8,6 @@ from .DeadCodeEleminator import DeadCodeRemover
 
 __all__ = [
     "ConstsTransformer",
-    "TransformerPipeline",
     "BasicFunctions",
     "BasicAttributes",
     "LCTransformer",

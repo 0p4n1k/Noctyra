@@ -1,7 +1,7 @@
 from ast import FunctionDef, Return
 import ast
 
-from transformers.BaseTransformer import BaseTransformer
+from noctyra.core.Transformer import BaseTransformer
 
 
 class DeadCodeRemover(BaseTransformer):

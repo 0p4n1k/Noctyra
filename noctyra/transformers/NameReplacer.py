@@ -1,6 +1,6 @@
-from transformers.BaseTransformer import BaseTransformer
-from classes import CustomFunction
-from utils.logger import LOGGER
+from noctyra.core.Transformer import BaseTransformer
+from noctyra.core import CustomFunction
+from noctyra.utils import LOGGER
 import ast
 
 

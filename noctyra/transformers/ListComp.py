@@ -1,7 +1,22 @@
-from transformers.BaseTransformer import BaseTransformer
-from utils.logger import LOGGER
-from classes import Variable
+from noctyra.core.Transformer import BaseTransformer
+from noctyra.utils import LOGGER
+from noctyra.core import Variable
+from typing import Any
 import ast
+
+
+def to_node(v: Any) -> ast.AST | None:
+    if isinstance(v, (int, float, str, bool, type(None))):
+        return ast.Constant(v)
+    elif isinstance(v, list):
+        content = [to_node(value) for value in v]
+
+        if any(i is None for i in content):
+            return None
+
+        return ast.List(elts=content)  # type: ignore
+
+    return None
 
 
 class LCTransformer(BaseTransformer):
@@ -48,7 +63,7 @@ class LCTransformer(BaseTransformer):
             return node
 
         LOGGER.debug(f"Folded list comprehension: {len(result)} items")
-        return ast.Constant(value=result)  # type: ignore
+        return to_node(result)
 
     def visit_GeneratorExp(self, node: ast.GeneratorExp):
 
@@ -94,6 +109,4 @@ class LCTransformer(BaseTransformer):
 
         LOGGER.debug(f"Folded generator expression into list: {len(result)} items")
 
-        return ast.List(
-            elts=[ast.Constant(value=elem) for elem in result], ctx=ast.Load()
-        )
+        return to_node(result)

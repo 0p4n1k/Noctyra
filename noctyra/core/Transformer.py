@@ -1,5 +1,5 @@
-from transformers.safe_eval import safe_eval
-from classes import Context
+from noctyra.transformers.safe_eval import safe_eval
+from noctyra.core import Context
 import ast
 
 

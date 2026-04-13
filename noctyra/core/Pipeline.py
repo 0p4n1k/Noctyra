@@ -1,6 +1,6 @@
-from utils.logger import LOGGER
+from noctyra.utils import LOGGER
 from typing import List, Type
-from classes import Context
+from .Context import Context
 import ast
 
 

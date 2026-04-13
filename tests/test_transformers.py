@@ -1,5 +1,4 @@
-from transformers import (
-    TransformerPipeline,
+from noctyra.transformers import (
     ConstsTransformer,
     BasicFunctions,
     BasicAttributes,
@@ -8,6 +7,7 @@ from transformers import (
     NameReplacer,
     DeadCodeRemover,
 )
+from noctyra.core import TransformerPipeline
 import ast
 
 
@@ -123,10 +123,6 @@ def test_function_kwargs():
 
 def test_const_folding_basic():
     assert "x = 7" in transform("x = 1 + 2 * 3")
-
-
-def test_const_folding_string():
-    assert "x = 'aaa'" in transform("x = 'a' * 3")
 
 
 # -- context propagation --

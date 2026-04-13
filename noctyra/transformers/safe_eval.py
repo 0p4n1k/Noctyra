@@ -1,7 +1,6 @@
-from classes.Variable import Variable, supported_types, supported_iterator
-from utils.shared import ATTR, OPS, FUNCS, ENCODING
-from classes import Context, CustomFunction
-from utils.logger import LOGGER
+from noctyra.core import Variable, supported_types, supported_iterator
+from noctyra.utils import ATTR, OPS, FUNCS, ENCODING, LOGGER
+from noctyra.core import Context, CustomFunction
 from typing import Any
 import operator
 import ast
@@ -94,6 +93,9 @@ class SafeEval(ast.NodeVisitor):
 
             except Exception:
                 return None
+
+        if isinstance(left, (str, list)) and isinstance(right, int):
+            return None
 
         if op is None:
             LOGGER.debug(f"Unsupported op: {type(node.op)}")

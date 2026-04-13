@@ -1,4 +1,4 @@
-from transformers import (
+from noctyra.transformers import (
     ConstsTransformer,
     BasicFunctions,
     BasicAttributes,
@@ -7,8 +7,8 @@ from transformers import (
     NameReplacer,
     DeadCodeRemover,
 )
-from transformers import TransformerPipeline
-from utils.logger import LOGGER
+from noctyra.core import TransformerPipeline
+from noctyra.utils import LOGGER
 import argparse
 import black
 import ast
