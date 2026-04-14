@@ -37,7 +37,46 @@ def test_compare_chain_false():
     assert "x = False" in out
 
 
+def test_compare_new_ops():
+    # testing is, is not, in, not in
+    code = """
+a = 1 is 1
+b = 1 is not 2
+c = 'x' in 'xyz'
+d = 'a' not in 'xyz'
+"""
+    out = transform(code)
+    assert "a = True" in out
+    assert "b = True" in out
+    assert "c = True" in out
+    assert "d = True" in out
+
+
+# -- operations --
+
+
+def test_binops_bit():
+    code = "x = (1 & 1) | (2 ^ 3) << 1 >> 1"
+    # (1 & 1) = 1
+    # (2 ^ 3) = 1
+    # 1 << 1 = 2
+    # 2 >> 1 = 1
+    # 1 | 1 = 1
+    out = transform(code)
+    assert "x = 1" in out
+
+
+def test_unary_ops():
+    code = "x = not False; y = ~-5; z = - -10"
+    out = transform(code)
+    assert "x = True" in out
+    assert "y = 4" in out
+    assert "z = 10" in out
+
+
 # -- ifexp --
+
+
 def test_ifexp_true():
     code = "x = 10 if True else 20"
     out = transform(code)
@@ -97,6 +136,20 @@ def test_pow_limit():
     assert len(out) < 1000
 
 
+def test_bytes_limit():
+    # bytes() should not OOM
+    code = "x = bytes(10000000)"
+    out = transform(code)
+    assert "bytes(10000000)" in out
+
+
+def test_list_repetition_limit():
+    # [0] * 10**8 should not OOM
+    code = "x = [0] * 10000000"
+    out = transform(code)
+    assert "[0] * 10000000" in out
+
+
 # -- edge cases safe_eval --
 
 
@@ -106,6 +159,19 @@ def test_division_by_zero_protection():
 
     # Should not crash or fold
     assert isinstance(out, str)
+
+
+def test_complex_subscript():
+    code = "x = 'hello world'[0:5]; y = [1, 2, 3][-1]"
+    out = transform(code)
+    assert "x = 'hello'" in out
+    assert "y = 3" in out
+
+
+def test_subscript_step():
+    code = "x = '123456'[::2]"
+    out = transform(code)
+    assert "x = '135'" in out
 
 
 # -- args handling --
@@ -258,3 +324,31 @@ exec(base64.b64decode(decoded))
     out = transform(code)
 
     assert "print('OK')" in out
+
+
+def test_bitwise_obfuscation():
+    # Many bitwise operations combined
+    code = "x = (10 << 2 | 5) ^ 42 & ~15"
+    # 10 << 2 = 40
+    # 40 | 5 = 45
+    # ~15 = -16
+    # 42 & -16 = 32
+    # 45 ^ 32 = 13
+    out = transform(code)
+    assert "x = 13" in out
+
+
+def test_complex_context_propagation():
+    code = """
+def main():
+    a = 100
+    b = a ^ 50
+    c = b + 10
+    if c > 100:
+        print("WIN")
+"""
+    out = transform(code)
+    # 100 ^ 50 = 86
+    # 86 + 10 = 96
+    # 96 > 100 = False
+    assert "print('WIN')" not in out
