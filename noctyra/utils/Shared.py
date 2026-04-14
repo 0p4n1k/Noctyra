@@ -1,7 +1,6 @@
 from typing import Callable, Any
 import binascii
 import operator
-import marshal
 import hashlib
 import base64
 import brotli
@@ -46,36 +45,42 @@ FUNCS: dict[str, Callable] = {
     "pow": pow,
     "zip": zip,
     "all": all,
-    "round": round
+    "round": round,
 }
 
-OPS: dict[Any, Callable] = {
+BIN_OPS: dict[Any, Callable] = {
     ast.Add: operator.add,
     ast.Sub: operator.sub,
     ast.Mult: operator.mul,
     ast.Div: operator.truediv,
+    ast.FloorDiv: operator.floordiv,
     ast.Mod: operator.mod,
+    ast.Pow: operator.pow,
+    ast.LShift: operator.lshift,
+    ast.RShift: operator.rshift,
     ast.BitOr: operator.or_,
     ast.BitAnd: operator.and_,
     ast.BitXor: operator.xor,
-    ast.Lt: operator.lt,
-    ast.Gt: operator.gt,
+}
+
+UNARY_OPS: dict[Any, Callable] = {
+    ast.UAdd: operator.pos,
+    ast.USub: operator.neg,
+    ast.Not: operator.not_,
+    ast.Invert: operator.invert,
+}
+
+COMP_OPS: dict[Any, Callable] = {
     ast.Eq: operator.eq,
     ast.NotEq: operator.ne,
+    ast.Lt: operator.lt,
     ast.LtE: operator.le,
+    ast.Gt: operator.gt,
     ast.GtE: operator.ge,
-    ast.And: operator.and_,
-    ast.Or: operator.or_,
-    ast.LShift: operator.lshift,
-    ast.RShift: operator.rshift,
-    ast.Pow: operator.pow,
-    ast.Mod: operator.mod,
-    ast.UnaryOp: operator.neg,
-    ast.USub: operator.neg,
-    ast.FloorDiv: operator.floordiv,
-    ast.And: all,
-    ast.BitAnd: lambda x, y: x & y,
-    ast.BitOr: lambda x, y: x | y,
+    ast.Is: operator.is_,
+    ast.IsNot: operator.is_not,
+    ast.In: lambda x, y: x in y,
+    ast.NotIn: lambda x, y: x not in y,
 }
 
 ENCODING: dict[str, dict[str, Callable[..., bytes]]] = {
@@ -96,5 +101,4 @@ ENCODING: dict[str, dict[str, Callable[..., bytes]]] = {
     "bytes": {"fromhex": bytes.fromhex},
     "binascii": {"unhexlify": binascii.unhexlify},
     "codecs": {"decode": codecs.decode},
-    "marshal": {"loads": marshal.loads},
 }

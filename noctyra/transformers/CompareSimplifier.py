@@ -1,19 +1,26 @@
 from noctyra.core.Transformer import BaseTransformer
-from noctyra.utils import OPS, LOGGER
+from noctyra.utils import COMP_OPS, LOGGER
 import ast
 
 
 class ConditionSimplifier(BaseTransformer):
 
     def visit_BoolOp(self, node: ast.BoolOp):
-        op = OPS.get(type(node.op))
+        self.generic_visit(node)
+        values = [self.eval(arg) for arg in node.values]
 
-        if op is None:
+        if any(v is None for v in values):
             return node
 
-        return ast.Constant(op([self.eval(arg) for arg in node.values]))
+        if isinstance(node.op, ast.And):
+            return ast.Constant(value=all(values))
+        elif isinstance(node.op, ast.Or):
+            return ast.Constant(value=any(values))
+
+        return node
 
     def visit_Compare(self, node: ast.Compare):
+        self.generic_visit(node)
         left = self.eval(node.left)
         if left is None:
             return node
@@ -25,9 +32,10 @@ class ConditionSimplifier(BaseTransformer):
             if right is None:
                 return node
 
-            if type(op) in OPS:
+            op_type = type(op)
+            if op_type in COMP_OPS:
                 try:
-                    result = OPS[type(op)](left, right)
+                    result = COMP_OPS[op_type](left, right)
                     results.append(result)
                     left = right
                 except Exception as e:
@@ -37,7 +45,7 @@ class ConditionSimplifier(BaseTransformer):
             else:
                 return node
 
-        if all(i is not None for i in results):
+        if results and all(i is not None for i in results):
             final_res = all(results)
             LOGGER.debug(f"Simplified comparison: {final_res}")
             return ast.Constant(value=final_res)
@@ -45,10 +53,10 @@ class ConditionSimplifier(BaseTransformer):
         return node
 
     def visit_IfExp(self, node: ast.IfExp):
-
+        self.generic_visit(node)
         result = self.eval(node)
 
-        if result:
+        if result is not None:
             return ast.Constant(value=result)
 
         return node
