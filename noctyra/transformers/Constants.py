@@ -21,6 +21,17 @@ class ConstsTransformer(BaseTransformer):
 
         return node
 
+    def visit_UnaryOp(self, node):
+        self.generic_visit(node)
+
+        result = self.eval(node)
+
+        if result is not None:
+            LOGGER.debug(f"Folded UnaryOp into constant: {result!r}")
+            return ast.Constant(value=result)
+
+        return node
+
     def visit_Call(self, node: ast.Call):
         self.generic_visit(node)
 
