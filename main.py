@@ -6,6 +6,8 @@ from noctyra.transformers import (
     ConditionSimplifier,
     NameReplacer,
     DeadCodeRemover,
+    LambdaLP,
+    Generic,
 )
 from noctyra.core import TransformerPipeline
 from noctyra.utils import LOGGER
@@ -73,6 +75,8 @@ def main():
             ConditionSimplifier,
             NameReplacer,
             DeadCodeRemover,
+            Generic,
+            LambdaLP,
         ],
         iterations=args.iterations,
         max_iterations=args.max_iterations,
