@@ -4,6 +4,7 @@ from noctyra.core import Context
 import ast
 
 
+
 class BaseTransformer(ast.NodeTransformer):
     def __init__(self) -> None:
         self.ctx: Context = Context()
@@ -55,8 +56,12 @@ class BaseTransformer(ast.NodeTransformer):
                         self.ctx.set(
                             target.id, CustomFunction(node.value.body, node.value.args)
                         )
-                    else:
+
+                    elif value is not None:
                         self.ctx.set(target.id, value)
+
+                    elif isinstance(node.value, ast.Name):
+                        self.ctx.remap(target.id, node.value.id)
 
         except Exception:
             for target in node.targets:
