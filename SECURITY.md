@@ -7,6 +7,8 @@ The following versions of Noctyra are currently supported with security updates:
 | Version | Supported          
 | ------- | ------------------ 
 | 0.1.x   | ✅               
+| 0.2.x   | ✅               
+
 
 ## Reporting a Vulnerability
 
