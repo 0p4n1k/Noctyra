@@ -172,6 +172,9 @@ class SafeEval(ast.NodeVisitor):
         upper = self.visit(node.upper)
         step = self.visit(node.step)
 
+        if all(i is None for i in [lower, upper, step]):
+            return
+
         return slice(lower, upper, step)
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
