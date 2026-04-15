@@ -1,16 +1,17 @@
 from .Function import CustomFunction
+import ast
 
 supported_types = int | float | str | bool | bytes | list | dict | set | CustomFunction
 supported_iterator = str | bytes | dict | list | set
 
 
 class Variable:
-    def __init__(self, name, value):
+    def __init__(self, name: str, value: supported_types | ast.AST):
 
         if not isinstance(name, str):
             raise ValueError(f"Variable name must be a string. {name=}, {value=}")
 
-        if not isinstance(value, supported_types):
+        if not isinstance(value, supported_types | ast.AST):
             raise ValueError(f"Unsupported variable type. {name=}, {value=}")
 
         self.name = name
@@ -28,7 +29,7 @@ class Variable:
 
         self.value = value
 
-    def get(self) -> supported_types:
+    def get(self) -> supported_types | ast.AST:
         return self.value
 
     def __repr__(self):
