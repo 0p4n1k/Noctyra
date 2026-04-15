@@ -32,15 +32,17 @@ class SafeEval(ast.NodeVisitor):
         if kwargs is None:
             kwargs = {}
 
-        new_args = [Variable(fn.args.args[i].arg, arg) for i, arg in enumerate(args)]
+        new_args = [
+            Variable(fn.get_args().args[i].arg, arg) for i, arg in enumerate(args)
+        ]
         new_kwargs = [Variable(name, val) for name, val in kwargs.items()]
 
         return SafeEval(
-            self.ctx.copy_with(new_args + new_kwargs),
+            Context(new_args + new_kwargs, self.ctx),
             depth=self.depth + 1,
             max_depth=self.max_depth,
             max_allocation=self.max_allocation,
-        ).visit(fn.body)
+        ).visit(fn.get_body())
 
     def get_name_obf(self, node: ast.AST):
         if isinstance(node, ast.Name):
@@ -64,8 +66,11 @@ class SafeEval(ast.NodeVisitor):
 
     def visit(self, node: ast.AST | None):
 
-        if self.depth >= self.max_depth or node is None:
+        if self.depth >= self.max_depth:
             LOGGER.debug("Max recursion depth reached")
+            return None
+
+        if node is None:
             return None
 
         method = "visit_" + node.__class__.__name__
@@ -75,6 +80,12 @@ class SafeEval(ast.NodeVisitor):
             return None
 
         return visitor(node)
+
+    def visit_Lambda(self, node: ast.Lambda) -> Any:
+
+        func = CustomFunction(node.body, node.args)
+
+        return lambda *args, **kwargs: self.exec_custom_func(func, args, kwargs)  # type: ignore
 
     def visit_BinOp(self, node):
         left = self.visit(node.left)
@@ -97,12 +108,11 @@ class SafeEval(ast.NodeVisitor):
                 return None
 
         if isinstance(left, (str, list)) and isinstance(right, int):
-            # Special case for sequence repetition
             if self.check_size(right):
                 return None
 
         if op is None:
-            LOGGER.debug(f"Unsupported op: {type(node.op)}")
+            LOGGER.warning(f"Unsupported op: {type(node.op)}")
             return None
 
         try:
@@ -119,6 +129,7 @@ class SafeEval(ast.NodeVisitor):
             return None
 
     def visit_Subscript(self, node: ast.Subscript):
+
         value = self.visit(node.value)
 
         if value is None:
@@ -215,7 +226,6 @@ class SafeEval(ast.NodeVisitor):
 
                 elif func is zip:
                     if all(i is not None for i in args):
-                        # zip could also be large if inputs are large
                         for a in args:
                             if isinstance(a, supported_iterator) and self.check_size(a):
                                 return None
@@ -225,6 +235,7 @@ class SafeEval(ast.NodeVisitor):
 
                     try:
                         res = func(*args, **kwargs)
+
                         if self.check_size(res):
                             return None
                         LOGGER.debug(f"Call {func_name}({args}) -> {res!r}")
@@ -232,7 +243,6 @@ class SafeEval(ast.NodeVisitor):
                     except Exception as e:
                         LOGGER.debug(f"Call {func_name} failed: {e}")
                         return None
-
             elif self.ctx.has(func_name):
 
                 func_entry = self.ctx.get(func_name)
@@ -402,7 +412,7 @@ class SafeEval(ast.NodeVisitor):
 
 
 def safe_eval(
-    node: ast.AST,
+    node: ast.AST | None,
     ctx: Context | None = None,
     max_depth: int = 50,
     max_allocation: int = 100_000,
