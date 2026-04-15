@@ -23,7 +23,6 @@ class ConstsTransformer(BaseTransformer):
 
     def visit_UnaryOp(self, node):
         self.generic_visit(node)
-
         result = self.eval(node)
 
         if result is not None:

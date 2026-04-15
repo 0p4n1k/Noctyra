@@ -22,4 +22,7 @@ class NameReplacer(BaseTransformer):
             LOGGER.debug(f"Resolved variable: {node.id} -> {result!r}")
             return ast.Constant(value=result)
 
+        if value := self.ctx.remap_get(node.id):
+            return ast.copy_location(ast.Name(value, ctx=node.ctx), node)
+
         return node

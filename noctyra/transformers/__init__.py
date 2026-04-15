@@ -7,6 +7,7 @@ from .NameReplacer import NameReplacer
 from .DeadCodeEleminator import DeadCodeRemover
 from .Generic import Generic
 from .LambdaLP import LambdaLP
+from .Inliner import BasicInliner
 
 __all__ = [
     "ConstsTransformer",
@@ -18,4 +19,5 @@ __all__ = [
     "DeadCodeRemover",
     "Generic",
     "LambdaLP",
+    "BasicInliner",
 ]
