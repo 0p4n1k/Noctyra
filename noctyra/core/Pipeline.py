@@ -1,6 +1,5 @@
 from noctyra.utils import LOGGER
 from typing import List, Type
-from .Context import Context
 import ast
 
 
@@ -23,14 +22,14 @@ class TransformerPipeline(ast.NodeTransformer):
         )
 
     def run_transformer(
-        self, transformer: ast.NodeTransformer, node: ast.AST, ctx: Context
+        self, transformer: ast.NodeTransformer, node: ast.AST
     ) -> ast.AST:
 
         return getattr(
             transformer,
             "run",
             (lambda node, ctx, max_depth, max_allocation: transformer.visit(node)),
-        )(node, ctx, self.max_depth, self.max_allocation)
+        )(node, None, self.max_depth, self.max_allocation)
 
     def visit(self, node):
 
@@ -41,9 +40,7 @@ class TransformerPipeline(ast.NodeTransformer):
             cur = 1
             while True:
                 for transformer in self.transformers:
-                    ctx = Context.from_tree(current_node)
-
-                    new_node = self.run_transformer(transformer, current_node, ctx)
+                    new_node = self.run_transformer(transformer, current_node)
 
                     if new_node != current_node:
                         current_node = new_node
@@ -63,8 +60,7 @@ class TransformerPipeline(ast.NodeTransformer):
         else:
             for _ in range(self.iterations):
                 for transformer in self.transformers:
-                    ctx = Context.from_tree(current_node)
-                    new_node = self.run_transformer(transformer, current_node, ctx)
+                    new_node = self.run_transformer(transformer, current_node)
 
                     if new_node != current_node:
                         current_node = new_node
