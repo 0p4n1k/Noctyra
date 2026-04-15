@@ -15,9 +15,10 @@ class BasicFunctions(BaseTransformer):
                     if any(i is None for i in args):
                         return node
 
-                    if len(args) == 1:
+                    if len(args) == 1 and isinstance(args[0], str | bytes):
                         LOGGER.warning(f"Unrolling exec() call: {args[0]!r}")
-                        return ast.parse(args[0]).body  # type: ignore
+                        code = ast.parse(args[0]).body  # type: ignore
+                        return [self.generic_visit(nd) for nd in code]
 
         return node
 

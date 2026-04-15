@@ -3,6 +3,8 @@ from noctyra.core import CustomFunction
 from noctyra.utils import LOGGER
 import ast
 
+from noctyra.utils import IMMUTABLE_TYPES
+
 
 class NameReplacer(BaseTransformer):
     def visit_Name(self, node):
@@ -12,7 +14,11 @@ class NameReplacer(BaseTransformer):
             return node
 
         result = self.eval(node)
-        if result is not None and not isinstance(result, CustomFunction):
+        if (
+            result is not None
+            and not isinstance(result, CustomFunction)
+            and isinstance(result, IMMUTABLE_TYPES)
+        ):
             LOGGER.debug(f"Resolved variable: {node.id} -> {result!r}")
             return ast.Constant(value=result)
 
