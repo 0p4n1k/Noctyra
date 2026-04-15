@@ -13,6 +13,8 @@ import lzma
 import bz2
 import ast
 
+IMMUTABLE_TYPES = (int, float, str, bytes, bool, type(None))
+
 h = hashlib.sha256()
 
 ATTR: dict[str, Callable] = {
@@ -46,6 +48,7 @@ FUNCS: dict[str, Callable] = {
     "zip": zip,
     "all": all,
     "round": round,
+    "filter": filter,
 }
 
 BIN_OPS: dict[Any, Callable] = {
