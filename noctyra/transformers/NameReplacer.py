@@ -1,5 +1,5 @@
 from noctyra.core.Transformer import BaseTransformer
-from noctyra.core import CustomFunction
+from noctyra.core import LambdaType, ImportSymbol
 from noctyra.utils import LOGGER
 import ast
 
@@ -13,14 +13,14 @@ class NameReplacer(BaseTransformer):
         if isinstance(node.ctx, ast.Store):
             return node
 
-        result = self.eval(node)
-        if (
-            result is not None
-            and not isinstance(result, CustomFunction)
-            and isinstance(result, IMMUTABLE_TYPES)
-        ):
-            LOGGER.debug(f"Resolved variable: {node.id} -> {result!r}")
-            return ast.Constant(value=result)
+        result_res = self.eval(node)
+        if result_res is not None:
+            result = self.unwrap(result_res)
+            if not isinstance(result_res, (LambdaType, ImportSymbol)) and isinstance(
+                result, IMMUTABLE_TYPES
+            ):
+                LOGGER.debug(f"Resolved variable: {node.id} -> {result!r}")
+                return ast.Constant(value=result)
 
         if value := self.ctx.remap_get(node.id):
             return ast.copy_location(ast.Name(value, ctx=node.ctx), node)

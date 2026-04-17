@@ -1,3 +1,4 @@
+from noctyra.core import ImportSymbol, LambdaType
 from noctyra.core.Transformer import BaseTransformer
 from noctyra.utils import LOGGER
 import ast
@@ -13,9 +14,10 @@ class ConstsTransformer(BaseTransformer):
     def visit_BinOp(self, node):
         self.generic_visit(node)
 
-        result = self.eval(node)
+        result_res = self.eval(node)
 
-        if result is not None:
+        if result_res is not None:
+            result = self.unwrap(result_res)
             LOGGER.debug(f"Folded BinOp into constant: {result!r}")
             return ast.Constant(value=result)
 
@@ -23,9 +25,10 @@ class ConstsTransformer(BaseTransformer):
 
     def visit_UnaryOp(self, node):
         self.generic_visit(node)
-        result = self.eval(node)
+        result_res = self.eval(node)
 
-        if result is not None:
+        if result_res is not None:
+            result = self.unwrap(result_res)
             LOGGER.debug(f"Folded UnaryOp into constant: {result!r}")
             return ast.Constant(value=result)
 
@@ -34,19 +37,19 @@ class ConstsTransformer(BaseTransformer):
     def visit_Call(self, node: ast.Call):
         self.generic_visit(node)
 
-        result = self.eval(node)
+        result_res = self.eval(node)
 
-        if result is None:
+        if isinstance(result_res, (type(None), LambdaType, ImportSymbol)):
             return node
 
-        return ast.Constant(result)
+        return ast.Constant(value=self.unwrap(result_res))
 
     def visit_Subscript(self, node: ast.Subscript):
         self.generic_visit(node)
 
-        result = self.eval(node)
+        result_res = self.eval(node)
 
-        if result is None:
+        if result_res is None:
             return node
 
-        return ast.Constant(result)
+        return ast.Constant(value=self.unwrap(result_res))

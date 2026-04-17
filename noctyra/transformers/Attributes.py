@@ -13,13 +13,16 @@ class BasicAttributes(BaseTransformer):
         attr_name = node.func.attr
 
         if attr_name in ATTR:
-            value = self.eval(node.func.value)
+            value_res = self.eval(node.func.value)
 
-            if value is not None:
-                args = [self.eval(arg) for arg in node.args]
+            if value_res is not None:
+                value = self.unwrap(value_res)
+                args_res = [self.eval(arg) for arg in node.args]
 
-                if any(arg is None for arg in args):
+                if any(arg is None for arg in args_res):
                     return node
+
+                args = [self.unwrap(a) for a in args_res]
 
                 try:
                     result = getattr(value, attr_name)(*args)

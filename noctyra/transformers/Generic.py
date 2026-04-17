@@ -9,9 +9,11 @@ class Generic(BaseTransformer):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             return node
 
-        result = self.eval(node)
+        result_res = self.eval(node)
 
-        if isinstance(result, (str, bytes, bool, int, float, complex)):
-            return ast.Constant(result)
+        if result_res is not None:
+            result = self.unwrap(result_res)
+            if isinstance(result, (str, bytes, bool, int, float, complex)):
+                return ast.Constant(result)
 
         return node

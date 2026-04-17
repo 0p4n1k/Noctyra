@@ -10,7 +10,12 @@ class DeadCodeRemover(BaseTransformer):
     def visit_If(self, node):
         self.generic_visit(node)
 
-        test_value = self.eval(node.test)
+        test_res = self.eval(node.test)
+
+        if test_res is None:
+            return node
+
+        test_value = self.unwrap(test_res)
 
         if test_value is True:
             return node.body

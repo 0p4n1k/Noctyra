@@ -7,10 +7,12 @@ class ConditionSimplifier(BaseTransformer):
 
     def visit_BoolOp(self, node: ast.BoolOp):
         self.generic_visit(node)
-        values = [self.eval(arg) for arg in node.values]
+        values_res = [self.eval(arg) for arg in node.values]
 
-        if any(v is None for v in values):
+        if any(v is None for v in values_res):
             return node
+
+        values = [self.unwrap(v) for v in values_res]
 
         if isinstance(node.op, ast.And):
             return ast.Constant(value=all(values))
@@ -21,16 +23,19 @@ class ConditionSimplifier(BaseTransformer):
 
     def visit_Compare(self, node: ast.Compare):
         self.generic_visit(node)
-        left = self.eval(node.left)
-        if left is None:
+        left_res = self.eval(node.left)
+        if left_res is None:
             return node
 
+        left = self.unwrap(left_res)
         results = []
 
         for op, comparator in zip(node.ops, node.comparators):
-            right = self.eval(comparator)
-            if right is None:
+            right_res = self.eval(comparator)
+            if right_res is None:
                 return node
+
+            right = self.unwrap(right_res)
 
             op_type = type(op)
             if op_type in COMP_OPS:
@@ -54,9 +59,9 @@ class ConditionSimplifier(BaseTransformer):
 
     def visit_IfExp(self, node: ast.IfExp):
         self.generic_visit(node)
-        result = self.eval(node)
+        result_res = self.eval(node)
 
-        if result is not None:
-            return ast.Constant(value=result)
+        if result_res is not None:
+            return ast.Constant(value=self.unwrap(result_res))
 
         return node

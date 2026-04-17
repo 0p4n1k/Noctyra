@@ -5,7 +5,14 @@ from typing import Any, Iterable, List
 import ast
 
 
+def unwrap(obj: Any) -> Any:
+    if hasattr(obj, "value"):
+        return obj.value
+    return obj
+
+
 def to_node(v: Any) -> ast.expr | None:
+    v = unwrap(v)
     if isinstance(v, (int, float, str, bytes, bool, type(None), complex)):
         return ast.Constant(v)
     elif isinstance(v, list):
@@ -56,7 +63,11 @@ class LCTransformer(BaseTransformer):
                 return [val] if val is not None else [None]
 
             gen = generators[gen_idx]
-            iterable = self.eval(gen.iter, current_ctx)
+            iterable_res = self.eval(gen.iter, current_ctx)
+            if iterable_res is None:
+                return None
+
+            iterable = self.unwrap(iterable_res)
 
             if not isinstance(iterable, (list, tuple, str, bytes, range, set, dict)):
                 return None
@@ -65,7 +76,7 @@ class LCTransformer(BaseTransformer):
             for item in iterable:
                 _vars = self._get_vars_from_target(gen.target, item)
                 new_ctx = Context(_vars, current_ctx)
-                if all(self.eval(if_cond, new_ctx) for if_cond in gen.ifs):
+                if all(self.unwrap(self.eval(if_cond, new_ctx)) for if_cond in gen.ifs):
                     sub_res = recurse(gen_idx + 1, new_ctx)
                     if sub_res is None:
                         return None
