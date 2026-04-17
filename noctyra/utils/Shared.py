@@ -86,7 +86,7 @@ COMP_OPS: dict[Any, Callable] = {
     ast.NotIn: lambda x, y: x not in y,
 }
 
-ENCODING: dict[str, dict[str, Callable[..., bytes]]] = {
+WHITELIST: dict[str, dict[str, Callable[..., bytes]]] = {
     "base64": {
         "b16decode": base64.b16decode,
         "b32decode": base64.b32decode,
