@@ -1,8 +1,8 @@
-from noctyra.core.Function import CustomFunction
+from noctyra.core import LambdaType, ImportSymbol
 from noctyra.transformers.safe_eval import safe_eval
 from noctyra.core import Context
+from typing import Any
 import ast
-
 
 
 class BaseTransformer(ast.NodeTransformer):
@@ -30,6 +30,19 @@ class BaseTransformer(ast.NodeTransformer):
             max_allocation=self.max_allocation,
         )
 
+    def unwrap(self, obj: Any) -> Any:
+        if hasattr(obj, "value"):
+            return self.unwrap(obj.value)
+        if isinstance(obj, list):
+            return [self.unwrap(x) for x in obj]
+        if isinstance(obj, tuple):
+            return tuple(self.unwrap(x) for x in obj)
+        if isinstance(obj, set):
+            return {self.unwrap(x) for x in obj}
+        if isinstance(obj, dict):
+            return {self.unwrap(k): self.unwrap(v) for k, v in obj.items()}
+        return obj
+
     def _def_visit(self, node: ast.ClassDef | ast.FunctionDef | ast.AsyncFunctionDef):
         old_ctx = self.ctx
 
@@ -44,6 +57,20 @@ class BaseTransformer(ast.NodeTransformer):
         self.ctx = old_ctx
         return result
 
+    def visit_Import(self, node: ast.Import) -> Any:
+        for name in node.names:
+            self.ctx.set(name.name, ImportSymbol(name.name))
+
+        return node
+
+    def visit_AugAssign(self, node: ast.AugAssign) -> Any:
+
+        if isinstance(node.target, ast.Name):
+            self.ctx.invalidate(node.target.id)
+            
+        return node
+
+
     def visit_Assign(self, node: ast.Assign):
         self.generic_visit(node)
 
@@ -54,7 +81,7 @@ class BaseTransformer(ast.NodeTransformer):
                 if isinstance(target, ast.Name):
                     if isinstance(node.value, ast.Lambda):
                         self.ctx.set(
-                            target.id, CustomFunction(node.value.body, node.value.args)
+                            target.id, LambdaType(node.value.body, node.value.args)
                         )
 
                     elif value is not None:

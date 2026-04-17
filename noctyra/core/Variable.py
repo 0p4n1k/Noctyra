@@ -1,35 +1,28 @@
-from .Function import CustomFunction
-import ast
+from typing import Generic, TypeVar
+from noctyra.core.Symbolic import SymbolicValue
+from .Symbolic import LambdaType
 
-supported_types = int | float | str | bool | bytes | list | dict | set | CustomFunction
+supported_types = (
+    int | float | str | bool | bytes | list | dict | set | LambdaType | SymbolicValue
+)
 supported_iterator = str | bytes | dict | list | set
 
 
-class Variable:
-    def __init__(self, name: str, value: supported_types | ast.AST):
+T = TypeVar("T", bound=supported_types | SymbolicValue)
 
-        if not isinstance(name, str):
-            raise ValueError(f"Variable name must be a string. {name=}, {value=}")
 
-        if not isinstance(value, supported_types | ast.AST):
-            raise ValueError(f"Unsupported variable type. {name=}, {value=}")
-
+class Variable(Generic[T]):
+    def __init__(self, name: str, value: T):
         self.name = name
-        self.value = value
+        self.value: T = value
 
     def has_value(self):
         return self.value is not None
 
-    def set(self, *, value):
-
-        if not isinstance(value, supported_types) and value is not None:
-            raise ValueError(
-                f"Unsupported variable type: {type(value).__name__}. {self.name=}, {value=}"
-            )
-
+    def set(self, *, value: T):
         self.value = value
 
-    def get(self) -> supported_types | ast.AST:
+    def get(self) -> T:
         return self.value
 
     def __repr__(self):
