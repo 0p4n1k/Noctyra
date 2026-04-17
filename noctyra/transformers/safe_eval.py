@@ -1,6 +1,6 @@
 from noctyra.core import Variable, supported_types, supported_iterator
-from noctyra.utils import ATTR, BIN_OPS, UNARY_OPS, COMP_OPS, FUNCS, ENCODING, LOGGER
-from noctyra.core import Context, CustomFunction
+from noctyra.utils import ATTR, BIN_OPS, UNARY_OPS, COMP_OPS, FUNCS, WHITELIST, LOGGER
+from noctyra.core import Context, LambdaType, SymbolicValue, NoneValue, ImportSymbol
 from typing import Any
 import operator
 import ast
@@ -21,7 +21,7 @@ class SafeEval(ast.NodeVisitor):
 
     def exec_custom_func(
         self,
-        fn: CustomFunction,
+        fn: LambdaType,
         args: list[supported_types] | None = None,
         kwargs: dict[str, supported_types] | None = None,
     ):
@@ -44,6 +44,20 @@ class SafeEval(ast.NodeVisitor):
             max_allocation=self.max_allocation,
         ).visit(fn.get_body())
 
+    def unwrap(self, obj):
+        """Méthode helper à ajouter dans ta classe SafeEval"""
+        if hasattr(obj, "value"):  # Vérifie si c'est un SymbolicValue
+            return self.unwrap(obj.value)
+        if isinstance(obj, list):
+            return [self.unwrap(x) for x in obj]
+        if isinstance(obj, tuple):
+            return tuple(self.unwrap(x) for x in obj)
+        if isinstance(obj, set):
+            return {self.unwrap(x) for x in obj}
+        if isinstance(obj, dict):
+            return {self.unwrap(k): self.unwrap(v) for k, v in obj.items()}
+        return obj
+
     def get_name_obf(self, node: ast.AST):
         if isinstance(node, ast.Name):
             return node.id
@@ -53,13 +67,14 @@ class SafeEval(ast.NodeVisitor):
                 return self.visit(node.args[0])
 
     def check_size(self, obj):
-        if isinstance(obj, (str, bytes, list, dict, set, tuple)):
-            if len(obj) > self.max_allocation:
-                LOGGER.debug(f"Size limit exceeded for {type(obj).__name__}")
+        val = self.unwrap(obj)
+        if isinstance(val, (str, bytes, list, dict, set, tuple)):
+            if len(val) > self.max_allocation:
+                LOGGER.debug(f"Size limit exceeded for {type(val).__name__}")
                 return True
-        elif isinstance(obj, (int, float)):
-            if obj > self.max_allocation or obj < -self.max_allocation:
-                LOGGER.debug(f"Numeric limit exceeded for {type(obj).__name__}")
+        elif isinstance(val, (int, float)):
+            if val > self.max_allocation or val < -self.max_allocation:
+                LOGGER.debug(f"Numeric limit exceeded for {type(val).__name__}")
                 return True
 
         return False
@@ -83,16 +98,19 @@ class SafeEval(ast.NodeVisitor):
 
     def visit_Lambda(self, node: ast.Lambda) -> Any:
 
-        func = CustomFunction(node.body, node.args)
+        func = LambdaType(node.body, node.args)
 
         return lambda *args, **kwargs: self.exec_custom_func(func, args, kwargs)  # type: ignore
 
     def visit_BinOp(self, node):
-        left = self.visit(node.left)
-        right = self.visit(node.right)
+        left_res = self.visit(node.left)
+        right_res = self.visit(node.right)
 
-        if right is None or left is None:
+        if left_res is None or right_res is None:
             return None
+
+        left = self.unwrap(left_res)
+        right = self.unwrap(right_res)
 
         op = BIN_OPS.get(type(node.op))
 
@@ -130,18 +148,21 @@ class SafeEval(ast.NodeVisitor):
 
     def visit_Subscript(self, node: ast.Subscript):
 
-        value = self.visit(node.value)
+        value_res = self.visit(node.value)
 
-        if value is None:
+        if value_res is None:
             return None
 
-        _slice = self.visit(node.slice)
+        value = self.unwrap(value_res)
+        _slice_res = self.visit(node.slice)
 
-        if _slice is None:
+        if _slice_res is None:
             return None
+
+        _slice = self.unwrap(_slice_res)
 
         try:
-            res = value[_slice]
+            res = value[_slice]  # type: ignore
             if self.check_size(res):
                 return None
             return res
@@ -153,7 +174,10 @@ class SafeEval(ast.NodeVisitor):
         if isinstance(node.op, ast.And):
             result = None
             for value in node.values:
-                result = self.visit(value)
+                res = self.visit(value)
+                if res is None:
+                    return None
+                result = self.unwrap(res)
                 if not result:
                     return result
             return result
@@ -161,7 +185,10 @@ class SafeEval(ast.NodeVisitor):
         else:
             result = None
             for value in node.values:
-                result = self.visit(value)
+                res = self.visit(value)
+                if res is None:
+                    return None
+                result = self.unwrap(res)
                 if result:
                     return result
             return result
@@ -175,7 +202,7 @@ class SafeEval(ast.NodeVisitor):
         if all(i is None for i in [lower, upper, step]):
             return
 
-        return slice(lower, upper, step)
+        return slice(self.unwrap(lower), self.unwrap(upper), self.unwrap(step))
 
     def visit_UnaryOp(self, node: ast.UnaryOp):
 
@@ -190,7 +217,7 @@ class SafeEval(ast.NodeVisitor):
             return None
 
         try:
-            res = op(operand)
+            res = op(self.unwrap(operand))
             if self.check_size(res):
                 return None
             return res
@@ -205,30 +232,32 @@ class SafeEval(ast.NodeVisitor):
             if func_name in FUNCS:
                 func = FUNCS[func_name]
 
-                args = [self.visit(arg) for arg in node.args]
-                kwargs = {
+                args_res = [self.visit(arg) for arg in node.args]
+                kwargs_res = {
                     kwarg.arg: self.visit(kwarg.value)
                     for kwarg in node.keywords
                     if kwarg.arg
                 }
-                if any(arg is None for arg in args):
+                if any(arg is None for arg in args_res):
                     return None
 
-                if any(v is None for v in kwargs.values()):
+                if any(v is None for v in kwargs_res.values()):
                     return None
 
                 if func is map:
-                    fn = args[0]
-                    arg = args[1]
-                    if isinstance(fn, CustomFunction) and isinstance(
+                    fn = args_res[0]
+                    arg = self.unwrap(args_res[1])
+                    if isinstance(fn, LambdaType) and isinstance(
                         arg, supported_iterator
                     ):
                         if self.check_size(arg):
                             return None
-                        return [self.exec_custom_func(fn, [x]) for x in arg]
+
+                        return [self.exec_custom_func(fn, [x]) for x in arg]  # type: ignore
 
                 elif func is zip:
-                    if all(i is not None for i in args):
+                    if all(i is not None for i in args_res):
+                        args = [self.unwrap(a) for a in args_res]
                         for a in args:
                             if isinstance(a, supported_iterator) and self.check_size(a):
                                 return None
@@ -237,6 +266,8 @@ class SafeEval(ast.NodeVisitor):
                 else:
 
                     try:
+                        args = [self.unwrap(a) for a in args_res]
+                        kwargs = {k: self.unwrap(v) for k, v in kwargs_res.items()}
                         res = func(*args, **kwargs)
 
                         if self.check_size(res):
@@ -255,45 +286,65 @@ class SafeEval(ast.NodeVisitor):
 
                 func = func_entry.get()
 
-                if not isinstance(func, CustomFunction):
+                if not isinstance(func, LambdaType):
                     return None
 
-                args = [self.visit(arg) for arg in node.args]
-                kwargs = {
+                args_res = [self.visit(arg) for arg in node.args]
+                kwargs_res = {
                     kwarg.arg: self.visit(kwarg.value)
                     for kwarg in node.keywords
                     if kwarg.arg
                 }
 
-                if not all(isinstance(v, supported_types) for v in args):
+                if any(arg is None for arg in args_res):
                     return None
 
-                if not all(isinstance(v, supported_types) for v in kwargs.values()):
+                if any(v is None for v in kwargs_res.values()):
                     return None
+
+                args = [self.unwrap(a) for a in args_res]
+                kwargs = {k: self.unwrap(v) for k, v in kwargs_res.items()}
 
                 res = self.exec_custom_func(func, args, kwargs)  # type: ignore
                 if self.check_size(res):
                     return None
                 return res
 
-        if isinstance(node.func, ast.Attribute):
+            elif isinstance(node.args[0], ast.Constant) and isinstance(
+                node.args[0].value, str
+            ):
+
+                if func_name == "eval":
+                    nd = ast.parse(node.args[0].value).body[0]
+
+                    if isinstance(nd, ast.Expr):
+                        return self.visit(nd.value)
+
+                elif func_name == "__import__":
+                    return ImportSymbol(node.args[0].value)
+
+        elif isinstance(node.func, ast.Attribute):
 
             result = self.visit(node.func)
 
             if result is not None:
                 if self.check_size(result):
                     return None
+
                 return result
 
             attr_name = node.func.attr
 
             if attr_name in ATTR:
-                value = self.visit(node.func.value)
-                if value is not None:
+                val_res = self.visit(node.func.value)
+                if val_res is not None:
+                    value = self.unwrap(val_res)
                     try:
-                        args = [self.visit(arg) for arg in node.args]
-                        if any(arg is None for arg in args):
+                        args_res = [self.visit(arg) for arg in node.args]
+                        if any(arg is None for arg in args_res):
                             return None
+
+                        args = [self.unwrap(a) for a in args_res]
 
                         func = getattr(value, attr_name)
                         result = func(*args)
@@ -312,14 +363,16 @@ class SafeEval(ast.NodeVisitor):
                     except Exception:
                         return None
 
-            module_name = self.get_name_obf(node.func.value)
+            module = self.visit(node.func.value)
 
-            if module_name in ENCODING and attr_name in ENCODING[module_name]:
-                func = ENCODING[module_name][attr_name]
-                args = [self.visit(arg) for arg in node.args]
+            if isinstance(module, ImportSymbol) and module.module in WHITELIST and attr_name in WHITELIST[module.module]:
+                func = WHITELIST[module.module][attr_name]
+                args_res = [self.visit(arg) for arg in node.args]
 
-                if any(arg is None for arg in args):
+                if any(arg is None for arg in args_res):
                     return None
+
+                args = [self.unwrap(a) for a in args_res]
 
                 try:
                     result = func(*args)
@@ -330,7 +383,7 @@ class SafeEval(ast.NodeVisitor):
                         return None
 
                     LOGGER.debug(
-                        f"Resolved encoding call: {module_name}.{attr_name} -> {result!r}"
+                        f"Resolved encoding call: {module.module}.{attr_name} -> {result!r}"
                     )
                     return result  # type: ignore
                 except Exception as e:
@@ -341,7 +394,9 @@ class SafeEval(ast.NodeVisitor):
         return None
 
     def visit_Constant(self, node: ast.Constant):
-        return node.value
+        if node.value is None:
+            return NoneValue()
+        return SymbolicValue(node.value, node)
 
     def visit_Name(self, node: ast.Name):
         if (entry := self.ctx.get(node.id)) is not None:
@@ -376,10 +431,12 @@ class SafeEval(ast.NodeVisitor):
 
     def visit_IfExp(self, node: ast.IfExp):
 
-        cond = self.visit(node.test)
+        cond_res = self.visit(node.test)
 
-        if cond is None:
+        if cond_res is None:
             return None
+
+        cond = self.unwrap(cond_res)
 
         result = self.visit(node.body) if cond else self.visit(node.orelse)
 
@@ -391,14 +448,18 @@ class SafeEval(ast.NodeVisitor):
             return None
 
         try:
-            left = self.visit(node.left)
-            if left is None:
+            left_res = self.visit(node.left)
+            if left_res is None:
                 return None
 
+            left = self.unwrap(left_res)
+
             for i, op in enumerate(node.ops):
-                right = self.visit(node.comparators[i])
-                if right is None:
+                right_res = self.visit(node.comparators[i])
+                if right_res is None:
                     return None
+
+                right = self.unwrap(right_res)
 
                 fn = COMP_OPS.get(type(op))
                 if fn is None:
