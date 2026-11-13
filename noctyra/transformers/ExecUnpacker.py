@@ -92,7 +92,16 @@ class ExecUnpacker(BaseTransformer):
             allow_bytes=True,
         )
         if code is None:
-            return node
+            val = self._eval_value(call.args[0])
+            if isinstance(val, bytes) and len(val) <= self.max_allocation:
+                try:
+                    code = val.decode("utf-8")
+                except UnicodeDecodeError:
+                    return node
+            elif isinstance(val, str) and len(val) <= self.max_allocation:
+                code = val
+            else:
+                return node
 
         try:
             stmts = ast.parse(code).body

@@ -827,3 +827,81 @@ h = dict(zip(["x", "y"], [10, 20]))
     assert "f = True" in out
     assert "g = [1, 2, 3]" in out
     assert "h = {'x': 10, 'y': 20}" in out
+
+
+# -- real-world obfuscator regressions --
+
+
+def test_zero_arg_call_does_not_crash_safe_eval():
+    code = """
+def main():
+    exit()
+main()
+"""
+    out = transform(code)
+    assert "exit()" in out
+    assert "main()" in out
+
+
+def test_bytes_fromhex_decode_folds():
+    code = """
+msg = bytes.fromhex("48656c6c6f").decode("utf-8")
+"""
+    out = transform(code)
+    assert "msg = 'Hello'" in out
+
+
+def test_global_does_not_leak_into_local_or_comprehension_scope():
+    code = """
+A = print
+def fib(n):
+    seq = []
+    A, B = 0, 1
+    for _ in range(n):
+        seq.append(A)
+        A, B = B, A + B
+    return seq
+def total(nums):
+    return sum(A * 2 for A in nums if A % 2 == 0)
+"""
+    out = transform(code)
+    assert "seq.append(print)" not in out
+    assert "print * 2" not in out
+    assert "print % 2" not in out
+
+
+def test_conditional_assignment_not_folded_across_branches():
+    code = """
+def greet(name, count):
+    if count > 2:
+        prefix = "Hello"
+    else:
+        prefix = "Hi"
+    return f"{prefix}, {name}!"
+"""
+    out = transform(code)
+    assert "return f'{prefix}, {name}!'" in out
+
+
+def test_exec_unpacker_gzip_from_import_alias():
+    import gzip
+
+    payload = gzip.compress(b"x = 1 + 2\nprint(x)")
+    code = f"from gzip import decompress as __\n_ = exec\n_(__( {payload!r} ))\n"
+    out = transform(code)
+    assert "x = 3" in out
+    assert "print(3)" in out
+
+
+def test_dead_code_remover_keeps_nonempty_except_body():
+    code = """
+try:
+    risky()
+except Exception:
+    if False:
+        x = 1
+"""
+    out = transform(code)
+    ast.parse(out)
+    assert "pass" in out
+

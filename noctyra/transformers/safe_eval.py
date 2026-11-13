@@ -289,6 +289,10 @@ class SafeEval(ast.NodeVisitor):
 
                 func = func_entry.get()
 
+                if isinstance(func, ImportSymbol) and "." in func.module:
+                    mod_name, attr_name = func.module.rsplit(".", 1)
+                    return self._call_whitelisted(mod_name, attr_name, node)
+
                 if not isinstance(func, LambdaType):
                     return None
 
@@ -313,12 +317,20 @@ class SafeEval(ast.NodeVisitor):
                     return None
                 return res
 
-            elif isinstance(node.args[0], ast.Constant) and isinstance(
-                node.args[0].value, str
+            elif (
+                node.args
+                and isinstance(node.args[0], ast.Constant)
+                and isinstance(node.args[0].value, str)
             ):
 
                 if func_name == "eval":
-                    nd = ast.parse(node.args[0].value).body[0]
+                    try:
+                        parsed = ast.parse(node.args[0].value)
+                    except SyntaxError:
+                        return None
+                    if not parsed.body:
+                        return None
+                    nd = parsed.body[0]
 
                     if isinstance(nd, ast.Expr):
                         return self.visit(nd.value)
@@ -337,6 +349,25 @@ class SafeEval(ast.NodeVisitor):
                 return result
 
             attr_name = node.func.attr
+
+            if (
+                attr_name == "fromhex"
+                and isinstance(node.func.value, ast.Name)
+                and node.func.value.id == "bytes"
+                and len(node.args) == 1
+                and not node.keywords
+            ):
+                arg_res = self.visit(node.args[0])
+                if arg_res is not None:
+                    arg_val = self.unwrap(arg_res)
+                    if isinstance(arg_val, str) and len(arg_val) <= self.max_allocation * 2:
+                        try:
+                            res = bytes.fromhex(arg_val)
+                            if self.check_size(res):
+                                return None
+                            return res
+                        except ValueError:
+                            return None
 
             if attr_name in ATTR:
                 val_res = self.visit(node.func.value)
@@ -368,88 +399,94 @@ class SafeEval(ast.NodeVisitor):
 
             module = self.visit(node.func.value)
 
-            if (
-                isinstance(module, ImportSymbol)
-                and module.module in WHITELIST
-                and attr_name in WHITELIST[module.module]
-            ):
-                func = WHITELIST[module.module][attr_name]
-                args_res = [self.visit(arg) for arg in node.args]
-
-                if any(arg is None for arg in args_res):
-                    return None
-
-                args = [self.unwrap(a) for a in args_res]
-
-                try:
-                    if (
-                        module.module == "zlib"
-                        and attr_name == "decompress"
-                        and len(args) == 1
-                        and isinstance(args[0], (bytes, bytearray))
-                    ):
-                        d_zlib = zlib.decompressobj()
-                        result = d_zlib.decompress(
-                            args[0], max_length=self.max_allocation
-                        )
-                        if d_zlib.unconsumed_tail:
-                            LOGGER.debug("zlib decompression exceeded max_allocation")
-                            return None
-                    elif (
-                        module.module == "gzip"
-                        and attr_name == "decompress"
-                        and len(args) == 1
-                        and isinstance(args[0], (bytes, bytearray))
-                    ):
-                        d_gzip = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
-                        result = d_gzip.decompress(
-                            args[0], max_length=self.max_allocation
-                        )
-                        if d_gzip.unconsumed_tail:
-                            LOGGER.debug("gzip decompression exceeded max_allocation")
-                            return None
-                    elif (
-                        module.module == "bz2"
-                        and attr_name == "decompress"
-                        and len(args) == 1
-                        and isinstance(args[0], (bytes, bytearray))
-                    ):
-                        d_bz2 = bz2.BZ2Decompressor()
-                        result = d_bz2.decompress(
-                            args[0], max_length=self.max_allocation
-                        )
-                        if not d_bz2.eof:
-                            LOGGER.debug("bz2 decompression exceeded max_allocation")
-                            return None
-                    elif (
-                        module.module == "lzma"
-                        and attr_name == "decompress"
-                        and len(args) == 1
-                        and isinstance(args[0], (bytes, bytearray))
-                    ):
-                        d_lzma = lzma.LZMADecompressor()
-                        result = d_lzma.decompress(
-                            args[0], max_length=self.max_allocation
-                        )
-                        if not d_lzma.eof:
-                            LOGGER.debug("lzma decompression exceeded max_allocation")
-                            return None
-                    else:
-                        result = func(*args)
-                    if not isinstance(result, supported_types):
-                        return None
-
-                    if self.check_size(result):
-                        return None
-
-                    LOGGER.debug(
-                        f"Resolved encoding call: {module.module}.{attr_name} -> {result!r}"
-                    )
-                    return result  # type: ignore
-                except Exception as e:
-                    LOGGER.debug(f"Failed to resolve encoding call: {e}")
+            if isinstance(module, ImportSymbol):
+                return self._call_whitelisted(module.module, attr_name, node)
 
             return None
+
+    def _call_whitelisted(
+        self, mod_name: str, attr_name: str, node: ast.Call
+    ) -> Any:
+        if mod_name not in WHITELIST or attr_name not in WHITELIST[mod_name]:
+            return None
+
+        func = WHITELIST[mod_name][attr_name]
+        args_res = [self.visit(arg) for arg in node.args]
+
+        if any(arg is None for arg in args_res):
+            return None
+
+        args = [self.unwrap(a) for a in args_res]
+
+        try:
+            if (
+                mod_name == "zlib"
+                and attr_name == "decompress"
+                and len(args) == 1
+                and isinstance(args[0], (bytes, bytearray))
+            ):
+                d_zlib = zlib.decompressobj()
+                result = d_zlib.decompress(
+                    args[0], max_length=self.max_allocation
+                )
+                if d_zlib.unconsumed_tail:
+                    LOGGER.debug("zlib decompression exceeded max_allocation")
+                    return None
+            elif (
+                mod_name == "gzip"
+                and attr_name == "decompress"
+                and len(args) == 1
+                and isinstance(args[0], (bytes, bytearray))
+            ):
+                d_gzip = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+                result = d_gzip.decompress(
+                    args[0], max_length=self.max_allocation
+                )
+                if d_gzip.unconsumed_tail:
+                    LOGGER.debug("gzip decompression exceeded max_allocation")
+                    return None
+            elif (
+                mod_name == "bz2"
+                and attr_name == "decompress"
+                and len(args) == 1
+                and isinstance(args[0], (bytes, bytearray))
+            ):
+                d_bz2 = bz2.BZ2Decompressor()
+                result = d_bz2.decompress(
+                    args[0], max_length=self.max_allocation
+                )
+                if not d_bz2.eof:
+                    LOGGER.debug("bz2 decompression exceeded max_allocation")
+                    return None
+            elif (
+                mod_name == "lzma"
+                and attr_name == "decompress"
+                and len(args) == 1
+                and isinstance(args[0], (bytes, bytearray))
+            ):
+                d_lzma = lzma.LZMADecompressor()
+                result = d_lzma.decompress(
+                    args[0], max_length=self.max_allocation
+                )
+                if not d_lzma.eof:
+                    LOGGER.debug("lzma decompression exceeded max_allocation")
+                    return None
+            else:
+                result = func(*args)
+            if not isinstance(result, supported_types):
+                return None
+
+            if self.check_size(result):
+                return None
+
+            LOGGER.debug(
+                f"Resolved encoding call: {mod_name}.{attr_name} -> {result!r}"
+            )
+            return result  # type: ignore
+        except Exception as e:
+            LOGGER.debug(f"Failed to resolve encoding call: {e}")
+
+        return None
 
         return None
 

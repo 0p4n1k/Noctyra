@@ -62,8 +62,18 @@ def _collect_used_names_in_func(
 class DeadCodeRemover(BaseTransformer):
     active = True
 
+    def _ensure_nonempty_bodies(self, node: ast.AST) -> None:
+        for child in ast.walk(node):
+            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef, ast.If, ast.For, ast.AsyncFor, ast.While, ast.With, ast.AsyncWith, ast.ExceptHandler)):
+                if not child.body:
+                    child.body = [ast.Pass()]
+            elif isinstance(child, ast.Try):
+                if not child.body:
+                    child.body = [ast.Pass()]
+
     def visit_Module(self, node: ast.Module) -> ast.AST:
         self.generic_visit(node)
+        self._ensure_nonempty_bodies(node)
 
         # Collect all loaded/referenced names outside of import statements
         used_names: set[str] = set()
@@ -102,7 +112,7 @@ class DeadCodeRemover(BaseTransformer):
         return node
 
     def visit_If(self, node: ast.If):
-        self.generic_visit(node)
+        super().visit_If(node)
 
         test_res = self.eval(node.test)
         if test_res is None:
@@ -114,7 +124,7 @@ class DeadCodeRemover(BaseTransformer):
         return node.orelse
 
     def visit_While(self, node: ast.While):
-        self.generic_visit(node)
+        super().visit_While(node)
 
         test_res = self.eval(node.test)
         if test_res is not None and not bool(self.unwrap(test_res)):
@@ -123,21 +133,17 @@ class DeadCodeRemover(BaseTransformer):
 
         return node
 
-    def _clean_func_body(
-        self, node: ast.FunctionDef | ast.AsyncFunctionDef
-    ) -> ast.FunctionDef | ast.AsyncFunctionDef:
-        self.generic_visit(node)
-
+    def _clean_stmt_list(
+        self, stmts: list[ast.stmt], used_names: set[str], allow_empty: bool = False
+    ) -> list[ast.stmt]:
         truncated: list[ast.stmt] = []
-        for stmt in node.body:
+        for stmt in stmts:
             truncated.append(stmt)
             if isinstance(stmt, (ast.Return, ast.Raise)):
                 break
-        node.body = truncated
 
-        used_names = _collect_used_names_in_func(node)
         cleaned: list[ast.stmt] = []
-        for stmt in node.body:
+        for stmt in truncated:
             if (
                 isinstance(stmt, ast.Assign)
                 and len(stmt.targets) == 1
@@ -147,12 +153,39 @@ class DeadCodeRemover(BaseTransformer):
             ):
                 LOGGER.debug(f"Removed dead local assignment: {stmt.targets[0].id}")
                 continue
+            if isinstance(stmt, (ast.If, ast.For, ast.AsyncFor, ast.While)):
+                stmt.body = self._clean_stmt_list(stmt.body, used_names)
+                if stmt.orelse:
+                    stmt.orelse = self._clean_stmt_list(
+                        stmt.orelse, used_names, allow_empty=True
+                    )
+            elif isinstance(stmt, (ast.With, ast.AsyncWith)):
+                stmt.body = self._clean_stmt_list(stmt.body, used_names)
+            elif isinstance(stmt, ast.Try):
+                stmt.body = self._clean_stmt_list(stmt.body, used_names)
+                for handler in stmt.handlers:
+                    handler.body = self._clean_stmt_list(handler.body, used_names)
+                if stmt.orelse:
+                    stmt.orelse = self._clean_stmt_list(
+                        stmt.orelse, used_names, allow_empty=True
+                    )
+                if stmt.finalbody:
+                    stmt.finalbody = self._clean_stmt_list(
+                        stmt.finalbody, used_names, allow_empty=True
+                    )
             cleaned.append(stmt)
 
-        if not cleaned:
+        if not cleaned and not allow_empty:
             cleaned = [ast.Pass()]
+        return cleaned
 
-        node.body = cleaned
+    def _clean_func_body(
+        self, node: ast.FunctionDef | ast.AsyncFunctionDef
+    ) -> ast.FunctionDef | ast.AsyncFunctionDef:
+        self.generic_visit(node)
+
+        used_names = _collect_used_names_in_func(node)
+        node.body = self._clean_stmt_list(node.body, used_names)
         return node
 
     def visit_FunctionDef(self, node: ast.FunctionDef):

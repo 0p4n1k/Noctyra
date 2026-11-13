@@ -13,6 +13,9 @@ class Context:
             if var.name == name and var.has_value():
                 return var
 
+        if name in self.invalidated:
+            return None
+
         if self.parent:
             return self.parent.get(name)
 
@@ -22,6 +25,9 @@ class Context:
         return self.get(name) is not None
 
     def set(self, name: str, value):
+        if name in self.invalidated:
+            self.invalidated = [n for n in self.invalidated if n != name]
+        self.remapped_funcs.pop(name, None)
 
         for var in self.vars:
             if var.name == name:
@@ -40,15 +46,25 @@ class Context:
         return True
 
     def invalidate(self, name: str) -> None:
-        self.invalidated.append(name)
+        if name not in self.invalidated:
+            self.invalidated.append(name)
         self.vars = [v for v in self.vars if v.name != name]
+        self.remapped_funcs.pop(name, None)
 
     def remap(self, name: str, target: str):
+        if name in self.invalidated:
+            self.invalidated = [n for n in self.invalidated if n != name]
+        self.vars = [v for v in self.vars if v.name != name]
         self.remapped_funcs[name] = target
 
     def remap_get(self, name: str) -> str | None:
         if value := self.remapped_funcs.get(name):
             return value
+
+        if name in self.invalidated or any(
+            v.name == name and v.has_value() for v in self.vars
+        ):
+            return None
 
         if self.parent:
             return self.parent.remap_get(name)
@@ -56,9 +72,13 @@ class Context:
         return None
 
     def remap_is(self, name: str, targets: list[str]) -> bool:
+        if name in self.remapped_funcs:
+            return self.remapped_funcs[name] in targets
 
-        if self.remapped_funcs.get(name) in targets:
-            return True
+        if name in self.invalidated or any(
+            v.name == name and v.has_value() for v in self.vars
+        ):
+            return False
 
         if self.parent:
             return self.parent.remap_is(name, targets)
