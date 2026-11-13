@@ -213,6 +213,7 @@ class ControlFlowSimplifier(BaseTransformer):
     def visit_While(self, node: ast.While) -> Any:
         outer = self._defined
         test_res = self.eval(node.test)
+        cff_init = self._peek_cff_init(node)
         self._defined = set(outer)
         super().visit_While(node)
         body_defined = self._defined
@@ -233,7 +234,163 @@ class ControlFlowSimplifier(BaseTransformer):
             return node.body[:-1]
 
         self._defined = outer
+        unrolled = self._try_unroll_cff(node, cff_init)
+        if unrolled is not None:
+            return unrolled
         return node
+
+    def _peek_cff_init(self, node: ast.While) -> tuple[str, Any] | None:
+        if node.orelse or len(node.body) != 1 or not isinstance(node.body[0], ast.If):
+            return None
+        first_eq = self._extract_eq_state(node.body[0].test)
+        if first_eq is None:
+            return None
+        state_var = first_eq[0]
+        init_entry = self.ctx.get(state_var)
+        if init_entry is None:
+            return None
+        init_raw = init_entry.get()
+        if is_symbolic_ref(init_raw):
+            return None
+        init_state = self.unwrap(init_raw)
+        if not isinstance(init_state, (int, str, bytes, bool)):
+            return None
+        return state_var, init_state
+
+    @staticmethod
+    def _extract_eq_state(test: ast.expr) -> tuple[str, Any] | None:
+        if (
+            isinstance(test, ast.Compare)
+            and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)
+            and len(test.comparators) == 1
+        ):
+            left, right = test.left, test.comparators[0]
+            if (
+                isinstance(left, ast.Name)
+                and isinstance(right, ast.Constant)
+                and isinstance(right.value, (int, str, bytes, bool))
+            ):
+                return left.id, right.value
+            if (
+                isinstance(right, ast.Name)
+                and isinstance(left, ast.Constant)
+                and isinstance(left.value, (int, str, bytes, bool))
+            ):
+                return right.id, left.value
+        return None
+
+    @staticmethod
+    def _mentions_name(stmts: list[ast.stmt], name: str) -> bool:
+        return any(
+            isinstance(child, ast.Name) and child.id == name
+            for stmt in stmts
+            for child in ast.walk(stmt)
+        )
+
+    def _try_unroll_cff(
+        self, node: ast.While, cff_init: tuple[str, Any] | None
+    ) -> list[ast.stmt] | None:
+        from noctyra.core import Context, Variable
+        from noctyra.transformers.safe_eval import SafeEval
+
+        if (
+            cff_init is None
+            or node.orelse
+            or len(node.body) != 1
+            or not isinstance(node.body[0], ast.If)
+        ):
+            return None
+
+        state_var, init_state = cff_init
+
+        # Flatten if/elif/else chain
+        branches: list[tuple[ast.expr, list[ast.stmt]]] = []
+        else_body: list[ast.stmt] = []
+        cur_if: ast.If | None = node.body[0]
+        while cur_if is not None:
+            branches.append((cur_if.test, cur_if.body))
+            if len(cur_if.orelse) == 1 and isinstance(cur_if.orelse[0], ast.If):
+                cur_if = cur_if.orelse[0]
+            else:
+                else_body = cur_if.orelse
+                cur_if = None
+
+        if len(branches) < 2:
+            return None
+
+        cases: dict[Any, tuple[list[ast.stmt], str, Any]] = {}
+        for test_expr, b_stmts in branches:
+            eq = self._extract_eq_state(test_expr)
+            if eq is None or eq[0] != state_var or eq[1] in cases:
+                return None
+            if not b_stmts:
+                return None
+            last = b_stmts[-1]
+            payload = b_stmts[:-1]
+            if _contains_break_or_continue(payload) or self._mentions_name(
+                payload, state_var
+            ):
+                return None
+            if (
+                isinstance(last, ast.Assign)
+                and len(last.targets) == 1
+                and isinstance(last.targets[0], ast.Name)
+                and last.targets[0].id == state_var
+                and isinstance(last.value, ast.Constant)
+                and isinstance(last.value.value, (int, str, bytes, bool))
+            ):
+                cases[eq[1]] = (payload, "next", last.value.value)
+            elif isinstance(last, ast.Break):
+                cases[eq[1]] = (payload, "break", None)
+            elif isinstance(last, (ast.Return, ast.Raise)):
+                cases[eq[1]] = (b_stmts, "exit", None)
+            else:
+                return None
+
+        if else_body and not (
+            len(else_body) == 1 and isinstance(else_body[0], (ast.Break, ast.Pass))
+        ):
+            return None
+
+        unrolled: list[ast.stmt] = []
+        visited: set[Any] = set()
+        cur_state: Any = init_state
+        max_steps = len(cases) + 1
+
+        for _ in range(max_steps):
+            loop_ctx = Context([Variable(state_var, cur_state)], self.ctx)
+            test_val = SafeEval(
+                loop_ctx,
+                max_depth=self.max_depth,
+                max_allocation=self.max_allocation,
+            ).visit(node.test)
+            if test_val is None or is_symbolic_ref(test_val):
+                return None
+            if not bool(self.unwrap(test_val)):
+                break
+
+            if cur_state not in cases:
+                if else_body and isinstance(else_body[0], ast.Break):
+                    break
+                return None
+
+            if cur_state in visited:
+                return None
+            visited.add(cur_state)
+
+            payload, kind, next_val = cases[cur_state]
+            unrolled.extend(payload)
+            if kind in ("break", "exit"):
+                break
+            cur_state = next_val
+        else:
+            return None
+
+        for stmt in unrolled:
+            self._defined.update(self._collect_assigned_names([stmt]))
+        LOGGER.debug(f"Unrolled CFF while loop on state '{state_var}' ({len(visited)} states)")
+        return unrolled
 
     def _try_body_names_bound(
         self, stmts: list[ast.stmt], pre_defined: set[str]

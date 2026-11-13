@@ -1437,3 +1437,43 @@ print(msg)
     out = transform(code)
     assert "print('secret')" in out
 
+
+def test_control_flow_flattening_unrolling():
+    code = """
+def f(x):
+    st = "init"
+    while True:
+        if st == "init":
+            y = x + 1
+            st = "fin"
+        elif st == "fin":
+            return y * 2
+        elif st == "dead":
+            y = 999
+            break
+"""
+    out = transform(code)
+    assert "while True:" not in out
+    assert "999" not in out
+    assert "y = x + 1" in out
+    assert "return y * 2" in out
+
+    code2 = """
+_state = 3
+_res = []
+while _state != 0:
+    if _state == 3:
+        _res.append("A")
+        _state = 1
+    elif _state == 1:
+        _res.append("B")
+        _state = 2
+    elif _state == 2:
+        _res.append("C")
+        _state = 0
+"""
+    out2 = transform(code2)
+    assert "while " not in out2
+    assert out2.index("'A'") < out2.index("'B'") < out2.index("'C'")
+
+
