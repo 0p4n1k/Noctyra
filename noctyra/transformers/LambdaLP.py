@@ -7,6 +7,7 @@ from noctyra.core import LambdaType, SymbolicValue
 from noctyra.core import Context, Variable
 from typing import Any
 import ast
+import copy
 
 
 class Replacer(BaseTransformer):
@@ -21,7 +22,7 @@ class Replacer(BaseTransformer):
             return res.to_ast()
 
         if isinstance(res, ast.AST):
-            ...
+            return copy.deepcopy(res)
 
         if isinstance(res, ast.Constant) and isinstance(
             res.value, (int, str, bytes, float, complex, type(None))
@@ -56,7 +57,7 @@ class LambdaLP(BaseTransformer):
             mapping_dict[kw.arg] = Variable(kw.arg, kw.value)  # type: ignore
 
         result = Replacer().run(
-            func.get_body(),
+            copy.deepcopy(func.get_body()),
             ctx=Context(list(mapping_dict.values())),
         )
 
