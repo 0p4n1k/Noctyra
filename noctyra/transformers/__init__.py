@@ -15,6 +15,7 @@ from .Algebraic import AlgebraicSimplifier
 from .ControlFlow import ControlFlowSimplifier
 from .Collections import CollectionsTransformer
 from .StringFormat import StringFormatTransformer
+from .ExecUnpacker import ExecUnpacker
 
 __all__ = [
     "ConstsTransformer",
@@ -34,4 +35,5 @@ __all__ = [
     "ControlFlowSimplifier",
     "CollectionsTransformer",
     "StringFormatTransformer",
+    "ExecUnpacker",
 ]

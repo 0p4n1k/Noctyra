@@ -14,6 +14,7 @@ from noctyra.transformers import (
     ControlFlowSimplifier,
     CollectionsTransformer,
     StringFormatTransformer,
+    ExecUnpacker,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -29,6 +30,7 @@ def transform(code: str) -> str:
             AlgebraicSimplifier,
             CollectionsTransformer,
             BasicFunctions,
+            ExecUnpacker,
             BasicAttributes,
             FStringTransformer,
             StringFormatTransformer,
@@ -736,3 +738,18 @@ def test_zip_bomb_protection():
     )
     out = ast.unparse(pipeline.visit(tree))
     assert "zlib.decompress" in out
+
+
+# -- exec unpacker --
+
+
+def test_exec_unpacker_eval_and_compile():
+    code = """
+a = eval("1 + 2 * 3")
+b = eval(compile("10 + 20", "<obf>", "eval"))
+exec(compile("print('UNPACKED')", "<obf>", "exec"))
+"""
+    out = transform(code)
+    assert "a = 7" in out
+    assert "b = 30" in out
+    assert "print('UNPACKED')" in out
