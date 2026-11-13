@@ -210,6 +210,24 @@ class BaseTransformer(ast.NodeTransformer):
             self.ctx.invalidate(name)
         return node
 
+    def _bind_single(self, target: ast.AST, val_node: ast.AST | None, evaluated: Any = None) -> None:
+        if not isinstance(target, ast.Name):
+            for name in self._collect_target_names(target):
+                self.ctx.invalidate(name)
+            return
+
+        if val_node is not None and isinstance(val_node, ast.Lambda):
+            self.ctx.set(target.id, LambdaType(val_node.body, val_node.args))
+            return
+
+        val = evaluated if evaluated is not None else (self.eval(val_node) if val_node is not None else None)
+        if val is not None:
+            self.ctx.set(target.id, val)
+        elif val_node is not None and isinstance(val_node, ast.Name):
+            self.ctx.remap(target.id, val_node.id)
+        else:
+            self.ctx.invalidate(target.id)
+
     def visit_Assign(self, node: ast.Assign):
         self.generic_visit(node)
 
@@ -218,18 +236,28 @@ class BaseTransformer(ast.NodeTransformer):
 
             for target in node.targets:
                 if isinstance(target, ast.Name):
-                    if isinstance(node.value, ast.Lambda):
-                        self.ctx.set(
-                            target.id, LambdaType(node.value.body, node.value.args)
-                        )
-
+                    self._bind_single(target, node.value, evaluated=value)
+                elif isinstance(target, (ast.Tuple, ast.List)) and not any(
+                    isinstance(e, ast.Starred) for e in target.elts
+                ):
+                    if isinstance(node.value, (ast.Tuple, ast.List)) and len(
+                        target.elts
+                    ) == len(node.value.elts):
+                        for tgt, val_node in zip(target.elts, node.value.elts):
+                            self._bind_single(tgt, val_node)
                     elif value is not None:
-                        self.ctx.set(target.id, value)
-
-                    elif isinstance(node.value, ast.Name):
-                        self.ctx.remap(target.id, node.value.id)
+                        unwrapped = self.unwrap(value)
+                        if isinstance(unwrapped, (tuple, list)) and len(
+                            target.elts
+                        ) == len(unwrapped):
+                            for tgt, elem in zip(target.elts, unwrapped):
+                                self._bind_single(tgt, None, evaluated=elem)
+                        else:
+                            for name in self._collect_target_names(target):
+                                self.ctx.invalidate(name)
                     else:
-                        self.ctx.invalidate(target.id)
+                        for name in self._collect_target_names(target):
+                            self.ctx.invalidate(name)
                 else:
                     for name in self._collect_target_names(target):
                         self.ctx.invalidate(name)

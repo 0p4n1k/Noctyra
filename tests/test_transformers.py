@@ -905,3 +905,13 @@ except Exception:
     ast.parse(out)
     assert "pass" in out
 
+
+def test_tuple_unpacking_aliases_and_constants():
+    code = """
+a, b, c = int, "0xff", 16
+x = a(b, c)
+"""
+    out = transform(code)
+    assert "x = 255" in out
+
+
