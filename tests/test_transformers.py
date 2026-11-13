@@ -915,3 +915,36 @@ x = a(b, c)
     assert "x = 255" in out
 
 
+def test_immediate_lambda_and_vars_inlining():
+    from noctyra.transformers import LambdaLP
+
+    code = """
+import math
+fn = (lambda m: vars(m)["sqrt"])(math)
+y = fn(16)
+"""
+    tree = ast.parse(transform(code))
+    out = ast.unparse(LambdaLP().run(tree))
+    assert "math.sqrt" in out
+    assert "lambda" not in out
+
+
+def test_exec_unpacker_compile_kwargs_and_class_globals():
+    import zlib
+
+    payload = zlib.compress(b"z = 40 + 2\n")
+    code = f"""
+import zlib
+class Box:
+    def put(k, v, g=globals):
+        g()[k] = v
+    def get(k):
+        return globals()[k]
+Box.put(k="key1", v={payload!r})
+eval(compile("globals()['exec'](zlib.decompress(Box.get(k='key1')))", filename="f", mode="eval"))
+"""
+    out = transform(code)
+    assert "z = 42" in out
+
+
+

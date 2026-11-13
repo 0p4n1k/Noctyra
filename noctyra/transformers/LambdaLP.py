@@ -36,18 +36,31 @@ class LambdaLP(BaseTransformer):
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
 
-        if not isinstance(node.func, ast.Name) or not self.ctx.has(node.func.id):
-            return node
-
-        func = self.ctx.get(node.func.id).get()  # type: ignore
-        if not isinstance(func, LambdaType):
+        if isinstance(node.func, ast.Lambda):
+            func_args = node.func.args
+            func_body: ast.AST = node.func.body
+            if (
+                func_args.vararg is not None
+                or func_args.kwarg is not None
+                or func_args.posonlyargs
+                or func_args.kwonlyargs
+                or any(isinstance(a, ast.Starred) for a in node.args)
+            ):
+                return node
+        elif isinstance(node.func, ast.Name) and self.ctx.has(node.func.id):
+            func = self.ctx.get(node.func.id).get()  # type: ignore
+            if not isinstance(func, LambdaType):
+                return node
+            func_args = func.get_args()
+            func_body = func.get_body()
+        else:
             return node
 
         mapping_dict = {}
 
         for i, arg_value in enumerate(node.args):
-            if i < len(func.get_args().args):
-                arg_name = func.get_args().args[i].arg
+            if i < len(func_args.args):
+                arg_name = func_args.args[i].arg
                 mapping_dict[arg_name] = Variable(arg_name, arg_value)  # type: ignore
 
         for kw in node.keywords:
@@ -57,7 +70,7 @@ class LambdaLP(BaseTransformer):
             mapping_dict[kw.arg] = Variable(kw.arg, kw.value)  # type: ignore
 
         result = Replacer().run(
-            copy.deepcopy(func.get_body()),
+            copy.deepcopy(func_body),
             ctx=Context(list(mapping_dict.values())),
         )
 

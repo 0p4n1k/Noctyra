@@ -79,6 +79,27 @@ class BasicInliner(BaseTransformer):
             LOGGER.debug(f"Inlined builtins.__dict__[{ident!r}] -> {ident}")
             return ast.copy_location(ast.Name(id=ident, ctx=node.ctx), node)
 
+        # vars(obj)['attr'] -> obj.attr
+        if (
+            isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+            and self.ctx.remap_is(node.value.func.id, ["vars"])
+            and self.ctx.is_usable(node.value.func.id)
+            and len(node.value.args) == 1
+            and not node.value.keywords
+        ):
+            target_obj = node.value.args[0]
+            if isinstance(target_obj, ast.Name) and target_obj.id in (
+                "builtins",
+                "__builtins__",
+            ):
+                LOGGER.debug(f"Inlined vars({target_obj.id})[{ident!r}] -> {ident}")
+                return ast.copy_location(ast.Name(id=ident, ctx=node.ctx), node)
+            LOGGER.debug(f"Inlined vars(...)[{ident!r}] -> .{ident}")
+            return ast.copy_location(
+                ast.Attribute(value=target_obj, attr=ident, ctx=node.ctx), node
+            )
+
         return node
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
