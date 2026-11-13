@@ -209,7 +209,8 @@ class _ScopeCollector(ast.NodeVisitor):
 
         if isinstance(node, ast.DictComp):
             self.visit(node.key)
-            self.visit(node.value)
+            if node.value is not None:
+                self.visit(node.value)
         else:
             self.visit(node.elt)
 
@@ -550,7 +551,8 @@ class IdentifierRenamer(BaseTransformer):
 
         if isinstance(node, ast.DictComp):
             node.key = self.visit(node.key)
-            node.value = self.visit(node.value)
+            if node.value is not None:
+                node.value = self.visit(node.value)
         else:
             node.elt = self.visit(node.elt)
 

@@ -155,7 +155,8 @@ class _ImportAnalyzer(ast.NodeVisitor):
                 self.visit(if_expr)
         if isinstance(node, ast.DictComp):
             self.visit(node.key)
-            self.visit(node.value)
+            if node.value is not None:
+                self.visit(node.value)
         else:
             self.visit(node.elt)
         self.current = prev
@@ -341,7 +342,8 @@ class ImportAliasFolder(BaseTransformer):
             gen.ifs = [self.visit(if_expr) for if_expr in gen.ifs]
         if isinstance(node, ast.DictComp):
             node.key = self.visit(node.key)
-            node.value = self.visit(node.value)
+            if node.value is not None:
+                node.value = self.visit(node.value)
         else:
             node.elt = self.visit(node.elt)
         self._current_scope = prev
