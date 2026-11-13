@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import ast
+import difflib
 import sys
 import time
 from pathlib import Path
@@ -9,6 +10,7 @@ from pathlib import Path
 import black
 from rich.console import Console
 from rich.panel import Panel
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn
 from rich.syntax import Syntax
 from rich.table import Table
 from rich.text import Text
@@ -52,13 +54,15 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Static Python deobfuscator based on AST transformations.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("file", help="Path to the Python file to transform.")
+    parser.add_argument(
+        "file", help="Path to the Python file or directory to transform."
+    )
     parser.add_argument(
         "-o",
         "--output",
         type=str,
         default="out.py",
-        help="Output file for the transformed code.",
+        help="Output file (or directory when input is a directory).",
     )
     parser.add_argument(
         "--rename-mode",
@@ -94,6 +98,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--stdout",
         action="store_true",
         help="Print transformed code to stdout.",
+    )
+    parser.add_argument(
+        "--diff",
+        action="store_true",
+        help="Display a unified diff between original and transformed code.",
     )
     parser.add_argument(
         "-q",
@@ -171,50 +180,8 @@ def _print_summary(
     console.print(table)
 
 
-def main() -> None:
-    parser = _build_parser()
-    args = parser.parse_args()
-
-    err_console = Console(stderr=True)
-    ui_console = Console(stderr=True) if args.stdout else Console()
-
-    if args.quiet:
-        LOGGER.setLevel("ERROR")
-    elif args.debug:
-        LOGGER.setLevel("DEBUG")
-
-    if not args.quiet:
-        _print_banner(ui_console)
-
-    input_path = Path(args.file)
-    if not input_path.is_file():
-        err_console.print(
-            Panel(
-                f"Input file not found: [bold]{input_path}[/bold]",
-                title="Error",
-                border_style="red",
-            )
-        )
-        sys.exit(1)
-
-    code = input_path.read_text(encoding="utf-8")
-
-    try:
-        tree = ast.parse(code)
-    except SyntaxError as exc:
-        err_console.print(
-            Panel(
-                f"Failed to parse [bold]{input_path}[/bold]: {exc}",
-                title="SyntaxError",
-                border_style="red",
-            )
-        )
-        sys.exit(1)
-
-    orig_ast_size = len(ast.dump(tree))
-    start = time.perf_counter()
-
-    pipeline = TransformerPipeline(
+def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
+    return TransformerPipeline(
         transformers=[
             ImportAliasFolder,
             BasicInliner,
@@ -238,34 +205,179 @@ def main() -> None:
         max_allocation=args.max_allocation,
     )
 
-    if args.quiet:
-        result = pipeline.visit(tree)
-        if args.rename_mode != "none":
-            result = IdentifierRenamer(mode=args.rename_mode).run(
-                result,
-                max_depth=args.max_depth,
-                max_allocation=args.max_allocation,
-            )
-    else:
-        with ui_console.status(
-            "[bold cyan]Running AST deobfuscation pipeline...[/bold cyan]",
-            spinner="dots",
-        ):
-            result = pipeline.visit(tree)
-            if args.rename_mode != "none":
-                result = IdentifierRenamer(mode=args.rename_mode).run(
-                    result,
-                    max_depth=args.max_depth,
-                    max_allocation=args.max_allocation,
-                )
 
-    elapsed_ms = (time.perf_counter() - start) * 1000.0
+def _deobfuscate_code(code: str, args: argparse.Namespace) -> tuple[str, int, int]:
+    tree = ast.parse(code)
+    orig_ast_size = len(ast.dump(tree))
+    pipeline = _build_pipeline(args)
+    result = pipeline.visit(tree)
+    if args.rename_mode != "none":
+        result = IdentifierRenamer(mode=args.rename_mode).run(
+            result,
+            max_depth=args.max_depth,
+            max_allocation=args.max_allocation,
+        )
     new_ast_size = len(ast.dump(result))
-
     new_code = ast.unparse(result)
     res = black.format_str(new_code, mode=black.Mode())
+    return res, orig_ast_size, new_ast_size
 
+
+def _print_diff(console: Console, orig_code: str, new_code: str, label: str) -> None:
+    diff_lines = list(
+        difflib.unified_diff(
+            orig_code.splitlines(keepends=True),
+            new_code.splitlines(keepends=True),
+            fromfile=f"a/{label}",
+            tofile=f"b/{label}",
+        )
+    )
+    if not diff_lines:
+        console.print(f"[dim]No changes for {label}[/dim]")
+        return
+    diff_text = "".join(diff_lines)
+    if sys.stdout.isatty():
+        console.print(Syntax(diff_text, "diff", theme="monokai"))
+    else:
+        print(diff_text, end="")
+
+
+def main() -> None:
+    parser = _build_parser()
+    args = parser.parse_args()
+
+    err_console = Console(stderr=True)
+    ui_console = Console(stderr=True) if (args.stdout or args.diff) else Console()
+
+    if args.quiet:
+        LOGGER.setLevel("ERROR")
+    elif args.debug:
+        LOGGER.setLevel("DEBUG")
+
+    if not args.quiet:
+        _print_banner(ui_console)
+
+    input_path = Path(args.file)
+    if not input_path.exists():
+        err_console.print(
+            Panel(
+                f"Input path not found: [bold]{input_path}[/bold]",
+                title="Error",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+    if input_path.is_dir():
+        out_dir = Path("out" if args.output == "out.py" else args.output)
+        py_files = sorted(input_path.rglob("*.py"))
+        if not py_files:
+            err_console.print(
+                Panel(
+                    f"No .py files found in [bold]{input_path}[/bold]",
+                    title="Warning",
+                    border_style="yellow",
+                )
+            )
+            sys.exit(0)
+
+        total_orig = 0
+        total_new = 0
+        total_orig_lines = 0
+        total_new_lines = 0
+        start = time.perf_counter()
+
+        def _process_batch() -> None:
+            nonlocal total_orig, total_new, total_orig_lines, total_new_lines
+            for src in py_files:
+                rel = src.relative_to(input_path)
+                dst = out_dir / rel
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                orig = src.read_text(encoding="utf-8")
+                try:
+                    res, orig_sz, new_sz = _deobfuscate_code(orig, args)
+                except SyntaxError as exc:
+                    LOGGER.error(f"SyntaxError in {src}: {exc}")
+                    continue
+                dst.write_text(res, encoding="utf-8")
+                total_orig += orig_sz
+                total_new += new_sz
+                total_orig_lines += len(orig.splitlines())
+                total_new_lines += len(res.splitlines())
+                if args.diff:
+                    _print_diff(Console(), orig, res, str(rel))
+
+        if args.quiet:
+            _process_batch()
+        else:
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[bold cyan]{task.description}"),
+                BarColumn(),
+                TextColumn("{task.completed}/{task.total}"),
+                console=ui_console,
+            ) as progress:
+                task = progress.add_task(
+                    "Deobfuscating directory...", total=len(py_files)
+                )
+                for src in py_files:
+                    rel = src.relative_to(input_path)
+                    dst = out_dir / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    orig = src.read_text(encoding="utf-8")
+                    try:
+                        res, orig_sz, new_sz = _deobfuscate_code(orig, args)
+                        dst.write_text(res, encoding="utf-8")
+                        total_orig += orig_sz
+                        total_new += new_sz
+                        total_orig_lines += len(orig.splitlines())
+                        total_new_lines += len(res.splitlines())
+                        if args.diff:
+                            _print_diff(Console(), orig, res, str(rel))
+                    except SyntaxError as exc:
+                        LOGGER.error(f"SyntaxError in {src}: {exc}")
+                    progress.advance(task)
+
+        elapsed_ms = (time.perf_counter() - start) * 1000.0
+        if not args.quiet:
+            _print_summary(
+                ui_console,
+                input_path=input_path,
+                output_path=out_dir,
+                rename_mode=args.rename_mode,
+                orig_code="\n" * total_orig_lines,
+                new_code="\n" * total_new_lines,
+                orig_ast_size=total_orig,
+                new_ast_size=total_new,
+                elapsed_ms=elapsed_ms,
+            )
+        return
+
+    code = input_path.read_text(encoding="utf-8")
+    start = time.perf_counter()
+
+    try:
+        if args.quiet:
+            res, orig_ast_size, new_ast_size = _deobfuscate_code(code, args)
+        else:
+            with ui_console.status(
+                "[bold cyan]Running AST deobfuscation pipeline...[/bold cyan]",
+                spinner="dots",
+            ):
+                res, orig_ast_size, new_ast_size = _deobfuscate_code(code, args)
+    except SyntaxError as exc:
+        err_console.print(
+            Panel(
+                f"Failed to parse [bold]{input_path}[/bold]: {exc}",
+                title="SyntaxError",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
+    elapsed_ms = (time.perf_counter() - start) * 1000.0
     output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(res, encoding="utf-8")
     LOGGER.debug(f"Output written to {output_path}")
 
@@ -281,6 +393,9 @@ def main() -> None:
             new_ast_size=new_ast_size,
             elapsed_ms=elapsed_ms,
         )
+
+    if args.diff:
+        _print_diff(Console(), code, res, input_path.name)
 
     if args.stdout:
         if sys.stdout.isatty():
