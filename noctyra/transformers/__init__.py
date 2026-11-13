@@ -10,6 +10,7 @@ from .LambdaLP import LambdaLP
 from .Inliner import BasicInliner
 from .FStrings import FStringTransformer
 from .Renamer import IdentifierRenamer
+from .Imports import ImportAliasFolder
 
 __all__ = [
     "ConstsTransformer",
@@ -24,4 +25,5 @@ __all__ = [
     "BasicInliner",
     "FStringTransformer",
     "IdentifierRenamer",
+    "ImportAliasFolder",
 ]

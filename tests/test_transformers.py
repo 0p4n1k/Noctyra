@@ -8,6 +8,7 @@ from noctyra.transformers import (
     DeadCodeRemover,
     FStringTransformer,
     IdentifierRenamer,
+    ImportAliasFolder,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -17,6 +18,7 @@ def transform(code: str) -> str:
     tree = ast.parse(code)
     pipeline = TransformerPipeline(
         transformers=[
+            ImportAliasFolder,
             ConstsTransformer,
             BasicFunctions,
             BasicAttributes,
@@ -493,3 +495,46 @@ def _0xbeef(x):
     once = rename(code, mode="all")
     twice = rename(once, mode="all")
     assert once == twice
+
+
+# -- import alias folding --
+
+
+def test_import_alias_folding_and_unrolling():
+    code = """
+import base64 as var_1
+
+exec(var_1.b64decode("cHJpbnQoJ09LJyk="))
+"""
+    out = transform(code)
+    assert "import base64\n" in out
+    assert "var_1" not in out
+    assert "print('OK')" in out
+
+
+def test_import_alias_dotted_and_from_import():
+    code = """
+import os.path as p
+from math import sqrt as s
+
+def f(x):
+    return p.join("a", "b"), s(x)
+"""
+    out = transform(code)
+    assert "import os.path" in out
+    assert "from math import sqrt" in out
+    assert "os.path.join('a', 'b')" in out
+    assert "sqrt(x)" in out
+
+
+def test_import_alias_respects_shadowing_and_reassignment():
+    code = """
+import math as m
+
+math = 123
+x = m.sqrt(16)
+"""
+    out = ast.unparse(ImportAliasFolder().run(ast.parse(code)))
+    # Since `math` is already bound in module scope, `import math as m` must not unfold
+    assert "import math as m" in out
+    assert "m.sqrt(16)" in out

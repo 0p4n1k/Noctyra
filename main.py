@@ -11,6 +11,7 @@ from noctyra.transformers import (
     BasicInliner,
     FStringTransformer,
     IdentifierRenamer,
+    ImportAliasFolder,
 )
 from noctyra.core import TransformerPipeline
 from noctyra.utils import LOGGER
@@ -77,6 +78,7 @@ def main():
 
     pipeline = TransformerPipeline(
         transformers=[
+            ImportAliasFolder,
             ConstsTransformer,
             BasicFunctions,
             BasicAttributes,

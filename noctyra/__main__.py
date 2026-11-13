@@ -8,6 +8,7 @@ from .transformers import (
     DeadCodeRemover,
     FStringTransformer,
     IdentifierRenamer,
+    ImportAliasFolder,
 )
 from .core import TransformerPipeline
 from .utils import LOGGER
@@ -74,6 +75,7 @@ def main():
 
     pipeline = TransformerPipeline(
         transformers=[
+            ImportAliasFolder,
             ConstsTransformer,
             BasicFunctions,
             BasicAttributes,
