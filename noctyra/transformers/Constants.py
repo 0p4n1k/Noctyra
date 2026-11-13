@@ -11,6 +11,13 @@ class ConstsTransformer(BaseTransformer):
         else:
             return None
 
+    @staticmethod
+    def _should_fold(node: ast.AST, result: object) -> bool:
+        if isinstance(result, (list, tuple, set, dict)):
+            if len(result) > 16 and len(repr(result)) > len(ast.unparse(node)):
+                return False
+        return True
+
     def visit_BinOp(self, node):
         self.generic_visit(node)
 
@@ -18,8 +25,9 @@ class ConstsTransformer(BaseTransformer):
 
         if result_res is not None:
             result = self.unwrap(result_res)
-            LOGGER.debug(f"Folded BinOp into constant: {result!r}")
-            return ast.Constant(value=result)
+            if self._should_fold(node, result):
+                LOGGER.debug(f"Folded BinOp into constant: {result!r}")
+                return ast.Constant(value=result)
 
         return node
 
@@ -29,8 +37,9 @@ class ConstsTransformer(BaseTransformer):
 
         if result_res is not None:
             result = self.unwrap(result_res)
-            LOGGER.debug(f"Folded UnaryOp into constant: {result!r}")
-            return ast.Constant(value=result)
+            if self._should_fold(node, result):
+                LOGGER.debug(f"Folded UnaryOp into constant: {result!r}")
+                return ast.Constant(value=result)
 
         return node
 
@@ -42,7 +51,11 @@ class ConstsTransformer(BaseTransformer):
         if isinstance(result_res, (type(None), LambdaType, ImportSymbol)):
             return node
 
-        return ast.Constant(value=self.unwrap(result_res))
+        result = self.unwrap(result_res)
+        if not self._should_fold(node, result):
+            return node
+
+        return ast.Constant(value=result)
 
     def visit_Subscript(self, node: ast.Subscript):
         self.generic_visit(node)
@@ -52,4 +65,8 @@ class ConstsTransformer(BaseTransformer):
         if result_res is None:
             return node
 
-        return ast.Constant(value=self.unwrap(result_res))
+        result = self.unwrap(result_res)
+        if not self._should_fold(node, result):
+            return node
+
+        return ast.Constant(value=result)

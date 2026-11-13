@@ -1049,3 +1049,16 @@ def test_oversized_range_blocked_by_max_allocation():
     code = "x = [i for i in range(10000000)]"
     out = transform(code)
     assert "range(10000000)" in out
+
+
+def test_large_list_multiplication_not_expanded():
+    code = """
+arr = [b''] * 800
+n = len(arr)
+first = arr[0]
+"""
+    out = transform(code)
+    assert "[b''] * 800" in out
+    assert "n = 800" in out
+    assert "first = b''" in out
+
