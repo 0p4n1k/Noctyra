@@ -6,6 +6,8 @@ from .transformers import (
     ConditionSimplifier,
     NameReplacer,
     DeadCodeRemover,
+    FStringTransformer,
+    IdentifierRenamer,
 )
 from .core import TransformerPipeline
 from .utils import LOGGER
@@ -49,6 +51,12 @@ def main():
         default="out.py",
         help="Output file for the transformed code. Default is out.py.",
     )
+    argparser.add_argument(
+        "--rename-mode",
+        choices=["all", "obfuscated", "none"],
+        default="all",
+        help="Identifier renaming mode: 'all' (default), 'obfuscated', or 'none'.",
+    )
     argparser.add_argument("--debug", action="store_true", help="Enable debug logging.")
     argparser.add_argument(
         "--stdout", action="store_true", help="Output transformed code to stdout."
@@ -69,6 +77,7 @@ def main():
             ConstsTransformer,
             BasicFunctions,
             BasicAttributes,
+            FStringTransformer,
             LCTransformer,
             ConditionSimplifier,
             NameReplacer,
@@ -81,6 +90,13 @@ def main():
     )
 
     result = pipeline.visit(tree)
+
+    if args.rename_mode != "none":
+        result = IdentifierRenamer(mode=args.rename_mode).run(
+            result,
+            max_depth=args.max_depth,
+            max_allocation=args.max_allocation,
+        )
 
     new_code = ast.unparse(result)
 

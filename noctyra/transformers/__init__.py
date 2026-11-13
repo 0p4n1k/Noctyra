@@ -8,6 +8,8 @@ from .DeadCodeEleminator import DeadCodeRemover
 from .Generic import Generic
 from .LambdaLP import LambdaLP
 from .Inliner import BasicInliner
+from .FStrings import FStringTransformer
+from .Renamer import IdentifierRenamer
 
 __all__ = [
     "ConstsTransformer",
@@ -20,4 +22,6 @@ __all__ = [
     "Generic",
     "LambdaLP",
     "BasicInliner",
+    "FStringTransformer",
+    "IdentifierRenamer",
 ]

@@ -6,6 +6,8 @@ from noctyra.transformers import (
     ConditionSimplifier,
     NameReplacer,
     DeadCodeRemover,
+    FStringTransformer,
+    IdentifierRenamer,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -18,6 +20,7 @@ def transform(code: str) -> str:
             ConstsTransformer,
             BasicFunctions,
             BasicAttributes,
+            FStringTransformer,
             LCTransformer,
             ConditionSimplifier,
             NameReplacer,
@@ -352,3 +355,141 @@ def main():
     # 86 + 10 = 96
     # 96 > 100 = False
     assert "print('WIN')" not in out
+
+
+# -- f-strings --
+
+
+def test_fstring_constant_folding():
+    code = """
+a = f"{'he' + 'llo'} {1 + 2}"
+b = f"{65:x}"
+c = f"{'abc'!r}"
+d = f"{'é'!a}"
+"""
+    out = transform(code)
+    assert "a = 'hello 3'" in out
+    assert "b = '41'" in out
+    assert "c = \"'abc'\"" in out or "c = \"'abc'\"" in out
+    assert "d = \"'\\\\xe9'\"" in out
+
+
+def test_fstring_partial_folding():
+    code = """
+def greet(name):
+    return f"{'hi'} {'there'} {name} {2 * 3}"
+"""
+    out = transform(code)
+    assert "f'hi there {name} 6'" in out
+
+
+def test_fstring_nested_in_exec():
+    code = """
+x = "print"
+exec(f"{x}('HELLO')")
+"""
+    out = transform(code)
+    assert "print('HELLO')" in out
+
+
+# -- renamer --
+
+
+def rename(code: str, mode: str = "all") -> str:
+    tree = ast.parse(code)
+    renamer = IdentifierRenamer(mode=mode)  # type: ignore[arg-type]
+    return ast.unparse(renamer.run(tree))
+
+
+def test_renamer_all_mode_scopes_and_builtins():
+    code = """
+import os
+import math as m_alias
+
+my_var = 10
+
+def compute(x, y=1):
+    z = x + y + my_var
+    return m_alias.sqrt(z)
+
+print(compute(5, y=2), os.name)
+"""
+    out = rename(code, mode="all")
+    assert "import os" in out
+    assert "os.name" in out
+    assert "print(" in out
+    assert "my_var" not in out
+    assert "compute" not in out
+    assert "m_alias" not in out
+    assert "def func_1(arg_1, arg_2=1):" in out
+    assert "func_1(5, arg_2=2)" in out
+    # Execute both to ensure identical semantics
+    ns_orig: dict = {}
+    ns_new: dict = {}
+    exec(code, ns_orig)
+    exec(out, ns_new)
+
+
+def test_renamer_obfuscated_mode_only_targets_obfuscated():
+    code = """
+readable_var = 1
+_0x1a2b = 2
+O0l1I = 3
+αβγ = 4
+
+def __dunder__():
+    return readable_var + _0x1a2b + O0l1I + αβγ
+"""
+    out = rename(code, mode="obfuscated")
+    assert "readable_var = 1" in out
+    assert "def __dunder__():" in out
+    assert "_0x1a2b" not in out
+    assert "O0l1I" not in out
+    assert "αβγ" not in out
+
+
+def test_renamer_none_mode_noop():
+    code = "_0x1a2b = 42"
+    assert rename(code, mode="none") == "_0x1a2b = 42"
+
+
+def test_renamer_class_self_global_nonlocal_and_comp():
+    code = """
+g_val = 10
+
+class MyClass:
+    def __init__(self, val):
+        self.attr_name = val
+
+    def method(self):
+        global g_val
+        outer = 1
+        def inner():
+            nonlocal outer
+            outer += g_val
+            return outer
+        return [i + inner() for i in range(3)]
+"""
+    out = rename(code, mode="all")
+    assert "def __init__(self, arg_1):" in out
+    assert "self.attr_name = arg_1" in out
+    assert "global var_" in out
+    assert "nonlocal var_" in out
+    assert "range(3)" in out
+    # Verify runtime equivalence
+    ns_orig: dict = {}
+    ns_new: dict = {}
+    exec(code, ns_orig)
+    exec(out, ns_new)
+    assert ns_orig["MyClass"](5).method() == ns_new["cls_1"](5).method()
+
+
+def test_renamer_idempotent():
+    code = """
+_0xdead = 1
+def _0xbeef(x):
+    return x + _0xdead
+"""
+    once = rename(code, mode="all")
+    twice = rename(once, mode="all")
+    assert once == twice

@@ -365,7 +365,11 @@ class SafeEval(ast.NodeVisitor):
 
             module = self.visit(node.func.value)
 
-            if isinstance(module, ImportSymbol) and module.module in WHITELIST and attr_name in WHITELIST[module.module]:
+            if (
+                isinstance(module, ImportSymbol)
+                and module.module in WHITELIST
+                and attr_name in WHITELIST[module.module]
+            ):
                 func = WHITELIST[module.module][attr_name]
                 args_res = [self.visit(arg) for arg in node.args]
 
@@ -473,6 +477,61 @@ class SafeEval(ast.NodeVisitor):
         except Exception as e:
             LOGGER.debug(f"Compare failed: {e}")
             return None
+
+    def visit_FormattedValue(self, node: ast.FormattedValue):
+        val_res = self.visit(node.value)
+        if val_res is None:
+            return None
+
+        if isinstance(val_res, (LambdaType, ImportSymbol)):
+            return None
+
+        val = self.unwrap(val_res)
+
+        try:
+            if node.conversion == 115:  # !s
+                val = str(val)
+            elif node.conversion == 114:  # !r
+                val = repr(val)
+            elif node.conversion == 97:  # !a
+                val = ascii(val)
+
+            if node.format_spec is not None:
+                spec_res = self.visit(node.format_spec)
+                if spec_res is None:
+                    return None
+                spec = self.unwrap(spec_res)
+                if not isinstance(spec, str):
+                    return None
+                formatted = format(val, spec)
+            else:
+                formatted = str(val)
+
+            if self.check_size(formatted):
+                return None
+
+            return formatted
+        except Exception as e:
+            LOGGER.debug(f"FormattedValue failed: {e}")
+            return None
+
+    def visit_JoinedStr(self, node: ast.JoinedStr):
+        parts: list[str] = []
+        for value in node.values:
+            res = self.visit(value)
+            if res is None:
+                return None
+            unwrapped = self.unwrap(res)
+            if not isinstance(unwrapped, str):
+                return None
+            parts.append(unwrapped)
+
+        joined = "".join(parts)
+        if self.check_size(joined):
+            return None
+
+        LOGGER.debug(f"Evaluated JoinedStr -> {joined!r}")
+        return joined
 
 
 def safe_eval(
