@@ -15,6 +15,7 @@ from noctyra.transformers import (
     CollectionsTransformer,
     StringFormatTransformer,
     ExecUnpacker,
+    TernarySimplifier,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -36,6 +37,7 @@ def transform(code: str) -> str:
             StringFormatTransformer,
             LCTransformer,
             ConditionSimplifier,
+            TernarySimplifier,
             ControlFlowSimplifier,
             NameReplacer,
             DeadCodeRemover,
@@ -753,3 +755,28 @@ exec(compile("print('UNPACKED')", "<obf>", "exec"))
     assert "a = 7" in out
     assert "b = 30" in out
     assert "print('UNPACKED')" in out
+
+
+# -- ternary simplifier --
+
+
+def test_ternary_and_not_compare_simplifier():
+    code = """
+def f(a, b, c):
+    x = not (a == b)
+    y = not (not (a < b))
+    z = 42 if c else 42
+    w = True if a < b else False
+    if c:
+        k = 1
+    else:
+        k = 1
+    return (x, y, z, w, k)
+"""
+    out = transform(code)
+    assert "a != b" in out
+    assert "a < b" in out
+    assert "z = 42" in out or "42," in out
+    assert "w = a < b" in out
+    assert "return (x, y, 42, w, 1)" in out
+    assert "else:" not in out

@@ -16,6 +16,7 @@ from .ControlFlow import ControlFlowSimplifier
 from .Collections import CollectionsTransformer
 from .StringFormat import StringFormatTransformer
 from .ExecUnpacker import ExecUnpacker
+from .TernarySimplifier import TernarySimplifier
 
 __all__ = [
     "ConstsTransformer",
@@ -36,4 +37,5 @@ __all__ = [
     "CollectionsTransformer",
     "StringFormatTransformer",
     "ExecUnpacker",
+    "TernarySimplifier",
 ]

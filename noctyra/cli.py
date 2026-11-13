@@ -35,6 +35,7 @@ from noctyra.transformers import (
     LCTransformer,
     NameReplacer,
     StringFormatTransformer,
+    TernarySimplifier,
 )
 from noctyra.utils import LOGGER
 
@@ -197,6 +198,7 @@ def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
             StringFormatTransformer,
             LCTransformer,
             ConditionSimplifier,
+            TernarySimplifier,
             ControlFlowSimplifier,
             NameReplacer,
             DeadCodeRemover,
