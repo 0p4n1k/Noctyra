@@ -29,6 +29,8 @@ def _collect_bound_names_in_expr(node: ast.AST) -> set[str]:
             for target_child in ast.walk(child.target):
                 if isinstance(target_child, ast.Name):
                     bound.add(target_child.id)
+        elif isinstance(child, ast.NamedExpr):
+            bound.add(child.target.id)
     return bound
 
 
@@ -160,39 +162,76 @@ class LambdaLP(BaseTransformer):
         else:
             return node
 
-        if (
-            func_args.vararg is not None
-            or func_args.kwarg is not None
-            or func_args.posonlyargs
-            or func_args.kwonlyargs
-            or any(isinstance(a, ast.Starred) for a in node.args)
-            or any(kw.arg is None for kw in node.keywords)
+        if any(isinstance(child, ast.NamedExpr) for child in ast.walk(func_body)):
+            return node
+
+        for d in list(func_args.defaults) + [
+            kd for kd in func_args.kw_defaults if kd is not None
+        ]:
+            if not is_pure_expr(d) or any(
+                isinstance(c, ast.NamedExpr) for c in ast.walk(d)
+            ):
+                return node
+
+        if any(isinstance(a, ast.Starred) for a in node.args) or any(
+            kw.arg is None for kw in node.keywords
         ):
             return node
 
-        param_names = [a.arg for a in func_args.args]
-        if len(node.args) > len(param_names):
+        posonly_names = [a.arg for a in func_args.posonlyargs]
+        regular_names = [a.arg for a in func_args.args]
+        kwonly_names = [a.arg for a in func_args.kwonlyargs]
+        all_pos = posonly_names + regular_names
+
+        if func_args.vararg is None and len(node.args) > len(all_pos):
             return node
 
         bound_exprs: dict[str, ast.expr] = {}
-        for i, arg_value in enumerate(node.args):
-            bound_exprs[param_names[i]] = arg_value
+        for i, arg_value in enumerate(node.args[: len(all_pos)]):
+            bound_exprs[all_pos[i]] = arg_value
+        extra_pos = node.args[len(all_pos) :]
 
+        extra_kw: list[ast.expr] = []
         for kw in node.keywords:
             assert kw.arg is not None
-            if kw.arg not in param_names or kw.arg in bound_exprs:
+            if kw.arg in regular_names or kw.arg in kwonly_names:
+                if kw.arg in bound_exprs:
+                    return node
+                bound_exprs[kw.arg] = kw.value
+            elif func_args.kwarg is None:
                 return node
-            bound_exprs[kw.arg] = kw.value
+            else:
+                extra_kw.append(kw.value)
 
-        default_start = len(param_names) - len(func_args.defaults)
-        for idx, pname in enumerate(param_names):
+        default_start = len(all_pos) - len(func_args.defaults)
+        for idx, pname in enumerate(all_pos):
             if pname not in bound_exprs:
                 if idx < default_start:
                     return node
                 bound_exprs[pname] = func_args.defaults[idx - default_start]
 
+        for kname, dnode in zip(kwonly_names, func_args.kw_defaults):
+            if kname not in bound_exprs:
+                if dnode is None:
+                    return node
+                bound_exprs[kname] = dnode
+
+        vararg_set = {func_args.vararg.arg} if func_args.vararg is not None else set()
+        kwarg_set = {func_args.kwarg.arg} if func_args.kwarg is not None else set()
+        uses = _count_param_uses(func_body, set(bound_exprs) | vararg_set | kwarg_set)
+
+        if func_args.vararg is not None:
+            if uses.get(func_args.vararg.arg, 0) > 0 or any(
+                not is_pure_expr(a) for a in extra_pos
+            ):
+                return node
+        if func_args.kwarg is not None:
+            if uses.get(func_args.kwarg.arg, 0) > 0 or any(
+                not is_pure_expr(v) for v in extra_kw
+            ):
+                return node
+
         inner_bound = _collect_bound_names_in_expr(func_body)
-        uses = _count_param_uses(func_body, set(bound_exprs))
         for pname, arg_expr in bound_exprs.items():
             if uses.get(pname, 0) != 1 and not is_pure_expr(arg_expr):
                 return node

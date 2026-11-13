@@ -4,6 +4,17 @@ from typing import Any
 from noctyra.core import is_symbolic_ref
 from noctyra.core.Transformer import UNRESOLVED, BaseTransformer
 from noctyra.utils import IMMUTABLE_TYPES, LOGGER
+from noctyra.utils.Shared import is_pure_expr
+
+
+def _has_unhashable_literal(node: ast.expr | None) -> bool:
+    if node is None:
+        return False
+    if isinstance(node, (ast.List, ast.Dict, ast.Set)):
+        return True
+    if isinstance(node, ast.Tuple):
+        return any(_has_unhashable_literal(e) for e in node.elts)
+    return False
 
 
 class CollectionsTransformer(BaseTransformer):
@@ -53,6 +64,48 @@ class CollectionsTransformer(BaseTransformer):
         ):
             return node
         return None
+
+    def _is_pure_len_elem(self, node: ast.expr) -> bool:
+        if isinstance(node, ast.Lambda):
+            return True
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return all(
+                not isinstance(e, ast.Starred) and self._is_pure_len_elem(e)
+                for e in node.elts
+            )
+        if isinstance(node, ast.Set):
+            return all(
+                not isinstance(e, ast.Starred)
+                and not _has_unhashable_literal(e)
+                and self._is_pure_len_elem(e)
+                for e in node.elts
+            )
+        if isinstance(node, ast.Dict):
+            return all(
+                k is not None
+                and not _has_unhashable_literal(k)
+                and self._is_pure_len_elem(k)
+                and self._is_pure_len_elem(v)
+                for k, v in zip(node.keys, node.values)
+            )
+        if is_pure_expr(node):
+            return True
+        if isinstance(node, ast.UnaryOp):
+            return self._is_pure_len_elem(node.operand)
+        if isinstance(node, ast.BinOp):
+            if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+                return False
+            if isinstance(node.op, (ast.Pow, ast.LShift)) and not (
+                isinstance(node.right, ast.Constant)
+                and isinstance(node.right.value, int)
+                and not isinstance(node.right.value, bool)
+                and 0 <= node.right.value <= 64
+            ):
+                return False
+            return self._is_pure_len_elem(node.left) and self._is_pure_len_elem(
+                node.right
+            )
+        return self.eval(node) is not None
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
@@ -114,6 +167,17 @@ class CollectionsTransformer(BaseTransformer):
             ):
                 length = len(val)
                 LOGGER.debug(f"Folded len(...) into constant: {length!r}")
+                return ast.copy_location(ast.Constant(value=length), node)
+
+            arg = node.args[0]
+            if (
+                isinstance(arg, (ast.List, ast.Tuple))
+                and len(arg.elts) <= self.max_allocation
+                and not any(isinstance(e, ast.Starred) for e in arg.elts)
+                and all(self._is_pure_len_elem(e) for e in arg.elts)
+            ):
+                length = len(arg.elts)
+                LOGGER.debug(f"Structurally folded len(...) into constant: {length!r}")
                 return ast.copy_location(ast.Constant(value=length), node)
             return node
 

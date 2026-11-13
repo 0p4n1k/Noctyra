@@ -22,9 +22,13 @@ _INVERT_CMP: dict[type[ast.cmpop], type[ast.cmpop]] = {
 
 
 def _is_bool_expr(node: ast.AST) -> bool:
-    return isinstance(node, (ast.Compare, ast.BoolOp)) or (
-        isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not)
-    )
+    if isinstance(node, ast.Compare):
+        return True
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, ast.Not):
+        return True
+    if isinstance(node, ast.BoolOp):
+        return all(_is_bool_expr(v) for v in node.values)
+    return False
 
 
 class TernarySimplifier(BaseTransformer):
@@ -66,6 +70,12 @@ class TernarySimplifier(BaseTransformer):
 
     def visit_IfExp(self, node: ast.IfExp) -> ast.AST:
         self.generic_visit(node)
+
+        if isinstance(node.test, ast.Constant):
+            LOGGER.debug("Simplified constant-test ternary expression")
+            return ast.copy_location(
+                node.body if node.test.value else node.orelse, node
+            )
 
         if (
             is_pure_expr(node.test)

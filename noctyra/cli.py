@@ -18,6 +18,7 @@ from rich.text import Text
 from noctyra.core import TransformerPipeline
 from noctyra.transformers import (
     AlgebraicSimplifier,
+    AnnotationTransformer,
     BasicInliner,
     BuiltinFolder,
     CollectionsTransformer,
@@ -28,12 +29,15 @@ from noctyra.transformers import (
     DictDispatchSimplifier,
     ExecUnpacker,
     FStringTransformer,
+    GlobalsDispatchSimplifier,
     IdentifierRenamer,
     ImportAliasFolder,
     LambdaLP,
     LCTransformer,
     NameReplacer,
+    SetattrTracker,
     StringFormatTransformer,
+    SwappedImportResolver,
     TernarySimplifier,
 )
 from noctyra.utils import LOGGER
@@ -191,6 +195,7 @@ def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
             AlgebraicSimplifier,
             CollectionsTransformer,
             BuiltinFolder,
+            AnnotationTransformer,
             DictDispatchSimplifier,
             ExecUnpacker,
             FStringTransformer,
@@ -199,7 +204,10 @@ def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
             ConditionSimplifier,
             TernarySimplifier,
             ControlFlowSimplifier,
+            SwappedImportResolver,
             NameReplacer,
+            SetattrTracker,
+            GlobalsDispatchSimplifier,
             DeadCodeRemover,
             LambdaLP,
         ],

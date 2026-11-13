@@ -13,6 +13,7 @@ from noctyra.utils import LOGGER
 RenameMode = Literal["all", "obfuscated", "none"]
 
 _BUILTINS = frozenset(dir(builtins))
+_REFLECTION_FUNCS = frozenset({"globals", "locals", "vars", "eval", "exec"})
 _LOOKALIKE_CHARS = frozenset("O0l1I_")
 _HEX_NAME_RE = re.compile(r"^_?0x[0-9a-fA-F]+$")
 _CANONICAL_RE = re.compile(r"^(var|arg|func|cls)_\d+$")
@@ -337,6 +338,43 @@ class IdentifierRenamer(BaseTransformer):
         self._module_scope: _Scope | None = None
         self._current_scope: _Scope | None = None
         self._unresolved_kwarg_names: set[str] = set()
+        self._reflection_protected_names: set[str] = set()
+
+    def _collect_reflection_protected_names(self, node: ast.AST) -> set[str]:
+        has_reflection = any(
+            isinstance(n, ast.Call)
+            and isinstance(n.func, ast.Name)
+            and n.func.id in _REFLECTION_FUNCS
+            for n in ast.walk(node)
+        )
+        if not has_reflection:
+            return set()
+
+        protected: set[str] = set()
+        for n in ast.walk(node):
+            if (
+                isinstance(n, ast.Constant)
+                and isinstance(n.value, str)
+                and n.value.isidentifier()
+                and not keyword.iskeyword(n.value)
+            ):
+                protected.add(n.value)
+            elif (
+                isinstance(n, ast.Call)
+                and isinstance(n.func, ast.Name)
+                and n.func.id in ("eval", "exec")
+                and n.args
+                and isinstance(n.args[0], ast.Constant)
+                and isinstance(n.args[0].value, str)
+            ):
+                try:
+                    parsed = ast.parse(n.args[0].value)
+                except SyntaxError:
+                    continue
+                for sub in ast.walk(parsed):
+                    if isinstance(sub, ast.Name):
+                        protected.add(sub.id)
+        return protected
 
     def _should_rename(self, name: str, scope: _Scope) -> bool:
         if self.mode == "none":
@@ -346,6 +384,8 @@ class IdentifierRenamer(BaseTransformer):
         if not name or keyword.iskeyword(name) or keyword.issoftkeyword(name):
             return False
         if is_dunder(name) or name in _BUILTINS or name in scope.protected:
+            return False
+        if name in self._reflection_protected_names:
             return False
         if (
             scope.bindings.get(name) == "arg"
@@ -477,6 +517,9 @@ class IdentifierRenamer(BaseTransformer):
         self._scopes_by_node = collector.scopes_by_node
         self._module_scope = collector.module_scope
         self._unresolved_kwarg_names = self._collect_unresolved_kwargs(node)
+        self._reflection_protected_names = self._collect_reflection_protected_names(
+            node
+        )
 
         if self._module_scope is not None:
             self._collect_kept_names(self._module_scope)

@@ -7,7 +7,7 @@ from .LambdaLP import LambdaLP
 from .Inliner import BasicInliner
 from .FStrings import FStringTransformer
 from .Renamer import IdentifierRenamer
-from .Imports import ImportAliasFolder
+from .Imports import ImportAliasFolder, SwappedImportResolver
 from .Algebraic import AlgebraicSimplifier
 from .ControlFlow import ControlFlowSimplifier
 from .Collections import CollectionsTransformer
@@ -16,6 +16,9 @@ from .ExecUnpacker import ExecUnpacker
 from .TernarySimplifier import TernarySimplifier
 from .DictDispatch import DictDispatchSimplifier
 from .BuiltinFold import BuiltinFolder
+from .Annotations import AnnotationTransformer
+from .SetattrTracker import SetattrTracker
+from .GlobalsDispatch import GlobalsDispatchSimplifier
 
 __all__ = [
     "ConstsTransformer",
@@ -28,6 +31,7 @@ __all__ = [
     "FStringTransformer",
     "IdentifierRenamer",
     "ImportAliasFolder",
+    "SwappedImportResolver",
     "AlgebraicSimplifier",
     "ControlFlowSimplifier",
     "CollectionsTransformer",
@@ -36,4 +40,7 @@ __all__ = [
     "TernarySimplifier",
     "DictDispatchSimplifier",
     "BuiltinFolder",
+    "AnnotationTransformer",
+    "SetattrTracker",
+    "GlobalsDispatchSimplifier",
 ]

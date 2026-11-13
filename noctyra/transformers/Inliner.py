@@ -1,10 +1,26 @@
 from __future__ import annotations
 
 import ast
+import builtins
 import keyword
 from noctyra.core import ImportSymbol, is_symbolic_ref
 from noctyra.core.Transformer import BaseTransformer
 from noctyra.utils import LOGGER
+
+_MODULE_DUNDERS = frozenset(
+    {
+        "__dict__",
+        "__doc__",
+        "__file__",
+        "__loader__",
+        "__name__",
+        "__package__",
+        "__path__",
+        "__spec__",
+        "__cached__",
+    }
+)
+_BUILTIN_ATTRS = frozenset(dir(builtins)) - _MODULE_DUNDERS
 
 
 class BasicInliner(BaseTransformer):
@@ -104,9 +120,7 @@ class BasicInliner(BaseTransformer):
             and self._is_builtins_namespace(node.value.id)
             and self._is_builtin_usable(node.attr)
         ):
-            import builtins
-
-            if hasattr(builtins, node.attr):
+            if node.attr in _BUILTIN_ATTRS:
                 LOGGER.debug(f"Inlined {node.value.id}.{node.attr} -> {node.attr}")
                 return ast.copy_location(
                     ast.Name(id=node.attr, ctx=node.ctx), node
@@ -213,6 +227,7 @@ class BasicInliner(BaseTransformer):
                 if (
                     isinstance(obj, ast.Name)
                     and self._is_builtins_namespace(obj.id)
+                    and attr_name in _BUILTIN_ATTRS
                     and self._is_builtin_usable(attr_name)
                 ):
                     LOGGER.debug(
@@ -225,6 +240,19 @@ class BasicInliner(BaseTransformer):
                 return ast.copy_location(
                     ast.Attribute(value=obj, attr=attr_name, ctx=ast.Load()), node
                 )
+
+        # eval('valid_identifier') -> valid_identifier
+        if (
+            self.ctx.remap_is(node.func.id, ["eval"])
+            and self.ctx.is_usable(node.func.id)
+            and len(node.args) == 1
+            and not node.keywords
+            and not isinstance(node.args[0], ast.Starred)
+        ):
+            ident = self._eval_identifier(node.args[0])
+            if ident is not None:
+                LOGGER.debug(f"Inlined {node.func.id}({ident!r}) -> {ident}")
+                return ast.copy_location(ast.Name(id=ident, ctx=ast.Load()), node)
 
         # __import__('mod') -> mod (+ ensure import mod at module top)
         if (

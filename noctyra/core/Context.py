@@ -6,6 +6,7 @@ class Context:
         self.vars: list[Variable] = _vars or []
         self.invalidated: list[str] = []
         self.remapped_funcs: dict[str, str] = {}
+        self.import_aliases: dict[str, str] = {}
         self.parent = parent
 
     def get(self, name: str):
@@ -84,3 +85,13 @@ class Context:
             return self.parent.remap_is(name, targets)
 
         return name in targets
+
+    def set_import_alias(self, module: str, alias: str) -> None:
+        self.import_aliases[module] = alias
+
+    def get_import_alias(self, module: str) -> str | None:
+        if module in self.import_aliases:
+            return self.import_aliases[module]
+        if self.parent:
+            return self.parent.get_import_alias(module)
+        return None
