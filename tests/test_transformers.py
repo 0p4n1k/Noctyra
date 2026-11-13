@@ -16,6 +16,7 @@ from noctyra.transformers import (
     StringFormatTransformer,
     ExecUnpacker,
     TernarySimplifier,
+    DictDispatchSimplifier,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -30,6 +31,7 @@ def transform(code: str) -> str:
             ConstsTransformer,
             AlgebraicSimplifier,
             CollectionsTransformer,
+            DictDispatchSimplifier,
             BasicFunctions,
             ExecUnpacker,
             BasicAttributes,
@@ -780,3 +782,21 @@ def f(a, b, c):
     assert "w = a < b" in out
     assert "return (x, y, 42, w, 1)" in out
     assert "else:" not in out
+
+
+# -- dict dispatch simplifier --
+
+
+def test_dict_dispatch_simplifier():
+    code = """
+def f():
+    tbl = {"a": "print", "b": 42}
+    arr = [10, 20, 30]
+    mut = {"k": 1}
+    mut["k"] = 99
+    return (tbl["a"], tbl["b"], arr[1], mut["k"])
+"""
+    out = transform(code)
+    assert "('print', 42, 20, mut['k'])" in out
+    assert "tbl" not in out
+    assert "arr" not in out

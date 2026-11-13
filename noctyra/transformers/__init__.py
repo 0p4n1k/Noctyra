@@ -17,6 +17,7 @@ from .Collections import CollectionsTransformer
 from .StringFormat import StringFormatTransformer
 from .ExecUnpacker import ExecUnpacker
 from .TernarySimplifier import TernarySimplifier
+from .DictDispatch import DictDispatchSimplifier
 
 __all__ = [
     "ConstsTransformer",
@@ -38,4 +39,5 @@ __all__ = [
     "StringFormatTransformer",
     "ExecUnpacker",
     "TernarySimplifier",
+    "DictDispatchSimplifier",
 ]
