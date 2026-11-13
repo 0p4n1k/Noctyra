@@ -11,6 +11,7 @@ from .Inliner import BasicInliner
 from .FStrings import FStringTransformer
 from .Renamer import IdentifierRenamer
 from .Imports import ImportAliasFolder
+from .Algebraic import AlgebraicSimplifier
 
 __all__ = [
     "ConstsTransformer",
@@ -26,4 +27,5 @@ __all__ = [
     "FStringTransformer",
     "IdentifierRenamer",
     "ImportAliasFolder",
+    "AlgebraicSimplifier",
 ]

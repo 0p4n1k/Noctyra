@@ -9,6 +9,8 @@ from noctyra.transformers import (
     FStringTransformer,
     IdentifierRenamer,
     ImportAliasFolder,
+    BasicInliner,
+    AlgebraicSimplifier,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -19,7 +21,9 @@ def transform(code: str) -> str:
     pipeline = TransformerPipeline(
         transformers=[
             ImportAliasFolder,
+            BasicInliner,
             ConstsTransformer,
+            AlgebraicSimplifier,
             BasicFunctions,
             BasicAttributes,
             FStringTransformer,
@@ -507,8 +511,8 @@ import base64 as var_1
 exec(var_1.b64decode("cHJpbnQoJ09LJyk="))
 """
     out = transform(code)
-    assert "import base64\n" in out
     assert "var_1" not in out
+    assert "import base64" not in out
     assert "print('OK')" in out
 
 
@@ -538,3 +542,89 @@ x = m.sqrt(16)
     # Since `math` is already bound in module scope, `import math as m` must not unfold
     assert "import math as m" in out
     assert "m.sqrt(16)" in out
+
+
+# -- boolop short-circuiting --
+
+
+def test_boolop_short_circuit_values_and_partial():
+    code = """
+def f(x):
+    a = 0 or "hello"
+    b = 1 and "world"
+    c = False and x
+    d = True or x
+    e = False or x
+    g = True and x
+    return (a, b, c, d, e, g)
+"""
+    out = transform(code)
+    assert "a = 'hello'" in out or "return ('hello', 'world', False, True, x, x)" in out
+    assert "False" in out
+    assert "True" in out
+
+
+# -- dynamic inliner --
+
+
+def test_basic_inliner_builtins_getattr_and_import():
+    code = """
+import builtins
+__builtins__['print'](getattr(builtins, 'len')([1, 2, 3]))
+x = getattr(obj, 'method')(1)
+m = __import__('json').dumps({'a': 1})
+"""
+    out = transform(code)
+    assert "print(len([1, 2, 3]))" in out
+    assert "obj.method(1)" in out
+    assert "import json" in out
+    assert "json.dumps({'a': 1})" in out
+
+
+# -- algebraic / MBA --
+
+
+def test_algebraic_and_mba_simplification():
+    code = """
+def calc(x, y):
+    a = (x ^ y) + 2 * (x & y)
+    b = (x | y) + (x & y)
+    c = (x | y) - (x ^ y)
+    d = (x ^ y) | (x & y)
+    e = ~~x + 0 - 0
+    f = (y * 1) ^ 0
+    return (a, b, c, d, e, f)
+"""
+    out = transform(code)
+    assert "x + y" in out
+    assert "x & y" in out
+    assert "x | y" in out
+    assert "~~x" not in out
+    assert "^ 0" not in out
+    assert "* 1" not in out
+
+
+# -- dead code / unused locals & imports --
+
+
+def test_dead_code_truthy_if_while_raise_and_unused():
+    code = """
+import unused_mod
+import used_mod
+
+def fn(x):
+    dead_local = 123 + 456
+    if 1:
+        y = used_mod.go(x)
+    while False:
+        print("never")
+    return y
+    unreachable = 999
+"""
+    out = transform(code)
+    assert "import unused_mod" not in out
+    assert "import used_mod" in out
+    assert "dead_local" not in out
+    assert "never" not in out
+    assert "unreachable" not in out
+    assert "return used_mod.go(x)" in out or "y = used_mod.go(x)" in out

@@ -172,15 +172,15 @@ class SafeEval(ast.NodeVisitor):
 
     def visit_BoolOp(self, node: ast.BoolOp):
         if isinstance(node.op, ast.And):
-            result = None
+            result: Any = None
             for value in node.values:
                 res = self.visit(value)
                 if res is None:
                     return None
                 result = self.unwrap(res)
                 if not result:
-                    return result
-            return result
+                    return NoneValue() if result is None else result
+            return NoneValue() if result is None else result
 
         else:
             result = None
@@ -191,7 +191,7 @@ class SafeEval(ast.NodeVisitor):
                 result = self.unwrap(res)
                 if result:
                     return result
-            return result
+            return NoneValue() if result is None else result
 
     def visit_Slice(self, node: ast.Slice):
 

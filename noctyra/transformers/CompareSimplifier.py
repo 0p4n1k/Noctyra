@@ -1,5 +1,5 @@
 from noctyra.core.Transformer import BaseTransformer
-from noctyra.utils import COMP_OPS, LOGGER
+from noctyra.utils import COMP_OPS, IMMUTABLE_TYPES, LOGGER
 import ast
 
 
@@ -7,17 +7,43 @@ class ConditionSimplifier(BaseTransformer):
 
     def visit_BoolOp(self, node: ast.BoolOp):
         self.generic_visit(node)
-        values_res = [self.eval(arg) for arg in node.values]
+        is_and = isinstance(node.op, ast.And)
+        remaining: list[ast.expr] = []
+        last_const: tuple[bool, object] | None = None
 
-        if any(v is None for v in values_res):
-            return node
+        for val in node.values:
+            res = self.eval(val)
+            if res is None:
+                remaining.append(val)
+                last_const = None
+                continue
 
-        values = [self.unwrap(v) for v in values_res]
+            unwrapped = self.unwrap(res)
+            truthy = bool(unwrapped)
+            short_circuit = (not truthy) if is_and else truthy
 
-        if isinstance(node.op, ast.And):
-            return ast.Constant(value=all(values))
-        elif isinstance(node.op, ast.Or):
-            return ast.Constant(value=any(values))
+            if short_circuit:
+                if not remaining and isinstance(unwrapped, IMMUTABLE_TYPES):
+                    return ast.copy_location(ast.Constant(value=unwrapped), node)
+                const_node: ast.expr = (
+                    ast.copy_location(ast.Constant(value=unwrapped), val)
+                    if isinstance(unwrapped, IMMUTABLE_TYPES)
+                    else val
+                )
+                remaining.append(const_node)
+                last_const = None
+                break
+
+            last_const = (isinstance(unwrapped, IMMUTABLE_TYPES), unwrapped)
+
+        if not remaining and last_const is not None and last_const[0]:
+            return ast.copy_location(ast.Constant(value=last_const[1]), node)  # type: ignore[arg-type]
+
+        if len(remaining) == 1:
+            return remaining[0]
+
+        if remaining and len(remaining) < len(node.values):
+            return ast.copy_location(ast.BoolOp(op=node.op, values=remaining), node)
 
         return node
 

@@ -15,6 +15,7 @@ from rich.text import Text
 
 from noctyra.core import TransformerPipeline
 from noctyra.transformers import (
+    AlgebraicSimplifier,
     BasicAttributes,
     BasicFunctions,
     BasicInliner,
@@ -214,7 +215,9 @@ def main() -> None:
     pipeline = TransformerPipeline(
         transformers=[
             ImportAliasFolder,
+            BasicInliner,
             ConstsTransformer,
+            AlgebraicSimplifier,
             BasicFunctions,
             BasicAttributes,
             FStringTransformer,
@@ -222,7 +225,6 @@ def main() -> None:
             ConditionSimplifier,
             NameReplacer,
             DeadCodeRemover,
-            BasicInliner,
             Generic,
             LambdaLP,
         ],
