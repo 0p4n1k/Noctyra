@@ -12,6 +12,7 @@ from noctyra.transformers import (
     BasicInliner,
     AlgebraicSimplifier,
     ControlFlowSimplifier,
+    CollectionsTransformer,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -25,6 +26,7 @@ def transform(code: str) -> str:
             BasicInliner,
             ConstsTransformer,
             AlgebraicSimplifier,
+            CollectionsTransformer,
             BasicFunctions,
             BasicAttributes,
             FStringTransformer,
@@ -577,7 +579,7 @@ x = getattr(obj, 'method')(1)
 m = __import__('json').dumps({'a': 1})
 """
     out = transform(code)
-    assert "print(len([1, 2, 3]))" in out
+    assert "print(3)" in out
     assert "obj.method(1)" in out
     assert "import json" in out
     assert "json.dumps({'a': 1})" in out
@@ -656,3 +658,28 @@ def f(x):
     assert "try:" not in out
     assert "y = x + 1" in out
     assert "z = y + 2" in out
+
+
+# -- collections transformer --
+
+
+def test_collections_subscript_and_builtins():
+    code = """
+a = [10, 20, 30][1]
+b = {"k": "val"}["k"]
+c = "abcdef"[::-1]
+d = len([1, 2, 3, 4])
+e = sum((1, 2, 3))
+f = min(5, 2, 9)
+g = max([3, 7, 1])
+h = "".join(reversed("abc"))
+"""
+    out = transform(code)
+    assert "a = 20" in out
+    assert "b = 'val'" in out
+    assert "c = 'fedcba'" in out
+    assert "d = 4" in out
+    assert "e = 6" in out
+    assert "f = 2" in out
+    assert "g = 7" in out
+    assert "h = 'cba'" in out

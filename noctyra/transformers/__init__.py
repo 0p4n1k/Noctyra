@@ -13,6 +13,7 @@ from .Renamer import IdentifierRenamer
 from .Imports import ImportAliasFolder
 from .Algebraic import AlgebraicSimplifier
 from .ControlFlow import ControlFlowSimplifier
+from .Collections import CollectionsTransformer
 
 __all__ = [
     "ConstsTransformer",
@@ -30,4 +31,5 @@ __all__ = [
     "ImportAliasFolder",
     "AlgebraicSimplifier",
     "ControlFlowSimplifier",
+    "CollectionsTransformer",
 ]
