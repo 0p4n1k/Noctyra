@@ -46,17 +46,63 @@ class BasicInliner(BaseTransformer):
 
         return node
 
+    def _is_pure_seq(self, node: ast.AST) -> bool:
+        if isinstance(node, (ast.Name, ast.Constant)):
+            return True
+        if isinstance(node, (ast.List, ast.Tuple)):
+            return all(self._is_pure_seq(e) for e in node.elts)
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in ("dir", "list", "tuple")
+            and not node.keywords
+        ):
+            return all(self._is_pure_seq(a) for a in node.args)
+        return False
+
+    def visit_Attribute(self, node: ast.Attribute) -> ast.AST:
+        self.generic_visit(node)
+        if (
+            isinstance(node.ctx, ast.Load)
+            and isinstance(node.value, ast.Name)
+            and node.value.id in ("builtins", "__builtins__")
+            and self.ctx.is_usable(node.attr)
+            and not self.ctx.has(node.attr)
+        ):
+            import builtins
+
+            if hasattr(builtins, node.attr):
+                LOGGER.debug(f"Inlined {node.value.id}.{node.attr} -> {node.attr}")
+                return ast.copy_location(
+                    ast.Name(id=node.attr, ctx=node.ctx), node
+                )
+        return node
+
     def visit_Subscript(self, node: ast.Subscript) -> ast.AST:
         self.generic_visit(node)
+
+        # Generic identity: seq[seq.index(x)] -> x (for pure seq)
+        if (
+            isinstance(node.ctx, ast.Load)
+            and isinstance(node.slice, ast.Call)
+            and isinstance(node.slice.func, ast.Attribute)
+            and node.slice.func.attr == "index"
+            and len(node.slice.args) == 1
+            and not node.slice.keywords
+            and self._is_pure_seq(node.value)
+            and ast.dump(node.value) == ast.dump(node.slice.func.value)
+        ):
+            LOGGER.debug("Simplified seq[seq.index(x)] -> x")
+            return ast.copy_location(node.slice.args[0], node)
 
         ident = self._eval_identifier(node.slice)
         if ident is None:
             return node
 
-        # globals()['x'] / locals()['x']
+        # globals()['x'] / locals()['x'] / vars()['x']
         if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name):
             if (
-                self.ctx.remap_is(node.value.func.id, ["globals", "locals"])
+                self.ctx.remap_is(node.value.func.id, ["globals", "locals", "vars"])
                 and self.ctx.is_usable(node.value.func.id)
                 and not node.value.args
                 and not node.value.keywords

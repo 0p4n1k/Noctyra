@@ -947,4 +947,29 @@ eval(compile("globals()['exec'](zlib.decompress(Box.get(k='key1')))", filename="
     assert "z = 42" in out
 
 
+def test_generic_seq_index_and_builtins_vars():
+    code = """
+import builtins
+x = getattr(builtins, dir(builtins)[dir(builtins).index("int")])("42")
+v = builtins.vars
+v()["y"] = 10
+"""
+    out = transform(code)
+    assert "x = 42" in out
+    assert "y = 10" in out
+
+
+def test_module_attr_alias_and_large_int_folding():
+    code = """
+import binascii
+f = binascii.unhexlify
+s = f(b"48656c6c6f").decode("utf-8")
+n = 1526539672 + -1526539671
+"""
+    out = transform(code)
+    assert "s = 'Hello'" in out
+    assert "n = 1" in out
+
+
+
 

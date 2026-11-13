@@ -225,6 +225,12 @@ class BaseTransformer(ast.NodeTransformer):
             self.ctx.set(target.id, val)
         elif val_node is not None and isinstance(val_node, ast.Name):
             self.ctx.remap(target.id, val_node.id)
+        elif val_node is not None and isinstance(val_node, ast.Attribute):
+            base = self.eval(val_node.value)
+            if isinstance(base, ImportSymbol):
+                self.ctx.set(target.id, ImportSymbol(f"{base.module}.{val_node.attr}"))
+            else:
+                self.ctx.invalidate(target.id)
         else:
             self.ctx.invalidate(target.id)
 

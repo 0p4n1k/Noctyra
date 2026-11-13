@@ -76,7 +76,8 @@ class SafeEval(ast.NodeVisitor):
                 LOGGER.debug(f"Size limit exceeded for {type(val).__name__}")
                 return True
         elif isinstance(val, (int, float)):
-            if val > self.max_allocation or val < -self.max_allocation:
+            num_limit = max(self.max_allocation, 2**63 - 1)
+            if val > num_limit or val < -num_limit:
                 LOGGER.debug(f"Numeric limit exceeded for {type(val).__name__}")
                 return True
 
@@ -120,17 +121,16 @@ class SafeEval(ast.NodeVisitor):
         if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and right == 0:
             return None
 
-        if isinstance(right, int) and op in (operator.mul, operator.pow):
-            try:
-                if self.check_size(right):  # type: ignore
+        if op is operator.pow and isinstance(right, (int, float)) and abs(right) > self.max_allocation:
+            return None
+
+        if op is operator.mul:
+            if isinstance(left, (str, bytes, list, tuple)) and isinstance(right, int):
+                if right < 0 or len(left) * right > self.max_allocation:
                     return None
-
-            except Exception:
-                return None
-
-        if isinstance(left, (str, list)) and isinstance(right, int):
-            if self.check_size(right):
-                return None
+            elif isinstance(right, (str, bytes, list, tuple)) and isinstance(left, int):
+                if left < 0 or len(right) * left > self.max_allocation:
+                    return None
 
         if op is None:
             LOGGER.warning(f"Unsupported op: {type(node.op)}")
