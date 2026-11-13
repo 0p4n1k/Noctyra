@@ -229,10 +229,10 @@ class SafeEval(ast.NodeVisitor):
         return visitor(node)
 
     def visit_Lambda(self, node: ast.Lambda) -> Any:
-
         func = LambdaType(node.body, node.args)
-
-        return lambda *args, **kwargs: self.exec_custom_func(func, args, kwargs)  # type: ignore
+        wrapper = lambda *args, **kwargs: self.exec_custom_func(func, list(args), kwargs)  # type: ignore  # noqa: E731
+        wrapper._noctyra_lambda = func  # type: ignore[attr-defined]
+        return wrapper
 
     def visit_BinOp(self, node):
         left_res = self.visit(node.left)
@@ -524,41 +524,7 @@ class SafeEval(ast.NodeVisitor):
                 if not isinstance(func, LambdaType):
                     return None
 
-                if any(isinstance(a, ast.Starred) for a in node.args) or any(
-                    kw.arg is None for kw in node.keywords
-                ):
-                    return None
-
-                args_res = [self.visit(arg) for arg in node.args]
-                kwargs_res = {
-                    kwarg.arg: self.visit(kwarg.value)
-                    for kwarg in node.keywords
-                    if kwarg.arg is not None
-                }
-
-                for arg_node, arg_val in zip(node.args, args_res):
-                    if arg_val is None and not _is_pure_eval_arg(arg_node):
-                        return None
-
-                for kw_node, kw_val in zip(
-                    (kw.value for kw in node.keywords if kw.arg is not None),
-                    kwargs_res.values(),
-                ):
-                    if kw_val is None and not _is_pure_eval_arg(kw_node):
-                        return None
-
-                args = [
-                    _UNBOUND_ARG if a is None else self.unwrap(a) for a in args_res
-                ]
-                kwargs = {
-                    k: (_UNBOUND_ARG if v is None else self.unwrap(v))
-                    for k, v in kwargs_res.items()
-                }
-
-                res = self.exec_custom_func(func, args, kwargs)  # type: ignore
-                if res is not None and self.check_size(res):
-                    return None
-                return res
+                return self._eval_custom_func_call(func, node)
 
             elif (
                 self._is_builtin_usable(func_name)
@@ -654,6 +620,54 @@ class SafeEval(ast.NodeVisitor):
                 return self._call_whitelisted(module.module, attr_name, node)
 
             return None
+
+        else:
+            func_val = self.visit(node.func)
+            if isinstance(func_val, LambdaType):
+                return self._eval_custom_func_call(func_val, node)
+            if isinstance(
+                wrapped_fn := getattr(func_val, "_noctyra_lambda", None), LambdaType
+            ):
+                return self._eval_custom_func_call(wrapped_fn, node)
+            if isinstance(func_val, ImportSymbol) and "." in func_val.module:
+                mod_name, attr_name = func_val.module.rsplit(".", 1)
+                return self._call_whitelisted(mod_name, attr_name, node)
+            return None
+
+    def _eval_custom_func_call(self, func: LambdaType, node: ast.Call) -> Any:
+        if any(isinstance(a, ast.Starred) for a in node.args) or any(
+            kw.arg is None for kw in node.keywords
+        ):
+            return None
+
+        args_res = [self.visit(arg) for arg in node.args]
+        kwargs_res = {
+            kwarg.arg: self.visit(kwarg.value)
+            for kwarg in node.keywords
+            if kwarg.arg is not None
+        }
+
+        for arg_node, arg_val in zip(node.args, args_res):
+            if arg_val is None and not _is_pure_eval_arg(arg_node):
+                return None
+
+        for kw_node, kw_val in zip(
+            (kw.value for kw in node.keywords if kw.arg is not None),
+            kwargs_res.values(),
+        ):
+            if kw_val is None and not _is_pure_eval_arg(kw_node):
+                return None
+
+        args = [_UNBOUND_ARG if a is None else self.unwrap(a) for a in args_res]
+        kwargs = {
+            k: (_UNBOUND_ARG if v is None else self.unwrap(v))
+            for k, v in kwargs_res.items()
+        }
+
+        res = self.exec_custom_func(func, args, kwargs)  # type: ignore
+        if res is not None and self.check_size(res):
+            return None
+        return res
 
     def _call_whitelisted(
         self, mod_name: str, attr_name: str, node: ast.Call
@@ -805,6 +819,25 @@ class SafeEval(ast.NodeVisitor):
         res = tuple([self.visit(elt) for elt in node.elts])
         if any(v is None for v in res):
             return None
+        if self.check_size(res):
+            return None
+        return res
+
+    def visit_Dict(self, node: ast.Dict):
+        if any(k is None for k in node.keys):
+            return None
+        res: dict[Any, Any] = {}
+        for k_node, v_node in zip(node.keys, node.values):
+            assert k_node is not None
+            k_res = self.visit(k_node)
+            v_res = self.visit(v_node)
+            if k_res is None or v_res is None or is_symbolic_ref(k_res):
+                return None
+            k_val = self.unwrap(k_res)
+            try:
+                res[k_val] = v_res
+            except TypeError:
+                return None
         if self.check_size(res):
             return None
         return res

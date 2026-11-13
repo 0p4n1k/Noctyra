@@ -1426,3 +1426,14 @@ s_val = 'olleh'[::-fn([s(os.close)])]
     out = transform(code)
     assert "x = 2" in out
     assert "s_val = 'hello'" in out
+
+
+def test_dict_of_lambdas_dispatch_folds_in_comprehension():
+    code = """
+ops = {0: lambda x, y: x + y, 1: lambda x, y: x ^ y}
+msg = "".join([chr(ops[1](c, 0x42)) for c in [x ^ 0x42 for x in b"secret"]])
+print(msg)
+"""
+    out = transform(code)
+    assert "print('secret')" in out
+
