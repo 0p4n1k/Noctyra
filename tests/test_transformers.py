@@ -1024,7 +1024,28 @@ fn("ok")
     assert "print('ok')" in out
 
 
+def test_bytes_generator_xor_zlib_exec_compile_two_args():
+    import zlib
+
+    inner = 'print("decoded ok")'
+    compressed = zlib.compress(inner.encode("utf-8"))
+    key = b"lamp"
+    xored = bytes(b ^ key[i % 4] for i, b in enumerate(compressed))
+    code = f"""
+def func_4():
+    import zlib
+    var_17 = bytes(({xored!r}[i] ^ b"lamp"[i % 4] for i in range({len(xored)})))
+    var_18 = zlib.decompress(var_17).decode("utf-8")
+    var_19 = {{"__name__": "__main__"}}
+    exec(compile(var_18, "<ledger>", "exec"), var_19)
+"""
+    out = transform(code)
+    assert "print('decoded ok')" in out
+    assert "exec(" not in out
+    assert "zlib.decompress" not in out
 
 
-
-
+def test_oversized_range_blocked_by_max_allocation():
+    code = "x = [i for i in range(10000000)]"
+    out = transform(code)
+    assert "range(10000000)" in out

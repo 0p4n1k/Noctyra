@@ -51,6 +51,7 @@ FUNCS: dict[str, Callable] = {
     "all": all,
     "round": round,
     "filter": filter,
+    "range": range,
 }
 
 BIN_OPS: dict[Any, Callable] = {

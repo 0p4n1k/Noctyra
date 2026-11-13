@@ -213,7 +213,7 @@ class ExecUnpacker(BaseTransformer):
             return node
         if not self._is_exec_call(call):
             return node
-        if len(call.args) != 1 or call.keywords:
+        if len(call.args) not in (1, 2) or call.keywords:
             return node
 
         code = self._extract_compile_code(

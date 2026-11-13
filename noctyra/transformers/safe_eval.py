@@ -75,7 +75,7 @@ class SafeEval(ast.NodeVisitor):
 
     def check_size(self, obj):
         val = self.unwrap(obj)
-        if isinstance(val, (str, bytes, list, dict, set, tuple)):
+        if isinstance(val, (str, bytes, list, dict, set, tuple, range)):
             if len(val) > self.max_allocation:
                 LOGGER.debug(f"Size limit exceeded for {type(val).__name__}")
                 return True
