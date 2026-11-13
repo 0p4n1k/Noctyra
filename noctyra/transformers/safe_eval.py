@@ -1,6 +1,15 @@
-from noctyra.core import Variable, supported_types, supported_iterator
+from noctyra.core import (
+    Context,
+    ImportSymbol,
+    LambdaType,
+    NoneValue,
+    SymbolicValue,
+    Variable,
+    is_symbolic_ref,
+    supported_types,
+    unwrap as core_unwrap,
+)
 from noctyra.utils import ATTR, BIN_OPS, UNARY_OPS, COMP_OPS, FUNCS, WHITELIST, LOGGER
-from noctyra.core import Context, LambdaType, SymbolicValue, NoneValue, ImportSymbol
 from typing import Any
 import ast
 import blosc
@@ -11,6 +20,59 @@ import operator
 import re
 import struct
 import zlib
+
+_stdlib_zstd: Any
+try:
+    from compression import zstd as _stdlib_zstd_mod  # type: ignore[import-not-found]
+
+    _stdlib_zstd = _stdlib_zstd_mod
+except ImportError:
+    _stdlib_zstd = None
+
+
+def _is_zstd_single_frame_bounded(raw_z: bytes, max_allocation: int) -> bool:
+    """Validate that raw_z is a single standard zstd frame with declared size <= max_allocation."""
+    if len(raw_z) < 6 or raw_z[:4] != b"\x28\xb5\x2f\xfd":
+        return False
+    fhd = raw_z[4]
+    fcs_flag = (fhd >> 6) & 0x3
+    single_seg = (fhd >> 5) & 0x1
+    has_checksum = (fhd >> 2) & 0x1
+    did_len = (0, 1, 2, 4)[fhd & 0x3]
+    win_len = 0 if single_seg else 1
+    fcs_off = 5 + win_len + did_len
+    fcs_size = (1 if single_seg else 0, 2, 4, 8)[fcs_flag]
+    if fcs_size == 0 or len(raw_z) < fcs_off + fcs_size:
+        return False
+
+    if fcs_size == 1:
+        fcs = raw_z[fcs_off]
+    elif fcs_size == 2:
+        fcs = struct.unpack_from("<H", raw_z, fcs_off)[0] + 256
+    elif fcs_size == 4:
+        fcs = struct.unpack_from("<I", raw_z, fcs_off)[0]
+    else:
+        fcs = struct.unpack_from("<Q", raw_z, fcs_off)[0]
+    if fcs > max_allocation:
+        return False
+
+    pos = fcs_off + fcs_size
+    while True:
+        if pos + 3 > len(raw_z):
+            return False
+        bh = int.from_bytes(raw_z[pos : pos + 3], "little")
+        last_block = bh & 1
+        block_type = (bh >> 1) & 3
+        block_size = bh >> 3
+        if block_type == 3:
+            return False
+        pos += 3 + (1 if block_type == 1 else block_size)
+        if pos > len(raw_z):
+            return False
+        if last_block:
+            break
+    pos += 4 if has_checksum else 0
+    return pos == len(raw_z)
 
 
 class SafeEval(ast.NodeVisitor):
@@ -26,12 +88,21 @@ class SafeEval(ast.NodeVisitor):
         self.max_allocation = max_allocation
         self.ctx = ctx or Context()
 
+    def _is_builtin_usable(self, name: str) -> bool:
+        return (
+            self.ctx.is_usable(name)
+            and not self.ctx.has(name)
+            and self.ctx.remap_get(name) is None
+        )
+
     def exec_custom_func(
         self,
         fn: LambdaType,
-        args: list[supported_types] | None = None,
-        kwargs: dict[str, supported_types] | None = None,
+        args: list[Any] | None = None,
+        kwargs: dict[str, Any] | None = None,
     ):
+        if self.depth >= self.max_depth:
+            return None
 
         if args is None:
             args = []
@@ -39,45 +110,67 @@ class SafeEval(ast.NodeVisitor):
         if kwargs is None:
             kwargs = {}
 
-        new_args = [
-            Variable(fn.get_args().args[i].arg, arg) for i, arg in enumerate(args)
-        ]
-        new_kwargs = [Variable(name, val) for name, val in kwargs.items()]
+        fn_args = fn.get_args()
+        if fn_args.vararg is not None or fn_args.kwarg is not None:
+            return None
+
+        posonly_names = [a.arg for a in fn_args.posonlyargs]
+        regular_names = [a.arg for a in fn_args.args]
+        kwonly_names = [a.arg for a in fn_args.kwonlyargs]
+        all_pos = posonly_names + regular_names
+
+        if len(args) > len(all_pos):
+            return None
+
+        bound: dict[str, Any] = {}
+        for i, arg in enumerate(args):
+            bound[all_pos[i]] = arg
+
+        for name, val in kwargs.items():
+            if (name not in regular_names and name not in kwonly_names) or name in bound:
+                return None
+            bound[name] = val
+
+        default_start = len(all_pos) - len(fn_args.defaults)
+        for idx, pname in enumerate(all_pos):
+            if pname not in bound:
+                if idx < default_start:
+                    return None
+                dval = self.visit(fn_args.defaults[idx - default_start])
+                if dval is None or is_symbolic_ref(dval):
+                    return None
+                bound[pname] = self.unwrap(dval)
+
+        for kname, dnode in zip(kwonly_names, fn_args.kw_defaults):
+            if kname not in bound:
+                if dnode is None:
+                    return None
+                dval = self.visit(dnode)
+                if dval is None or is_symbolic_ref(dval):
+                    return None
+                bound[kname] = self.unwrap(dval)
+
+        func_vars = [Variable(name, val) for name, val in bound.items()]
 
         return SafeEval(
-            Context(new_args + new_kwargs, self.ctx),
+            Context(func_vars, self.ctx),
             depth=self.depth + 1,
             max_depth=self.max_depth,
             max_allocation=self.max_allocation,
         ).visit(fn.get_body())
 
     def unwrap(self, obj):
-        """Méthode helper à ajouter dans ta classe SafeEval"""
-        if hasattr(obj, "value"):  # Vérifie si c'est un SymbolicValue
-            return self.unwrap(obj.value)
-        if isinstance(obj, list):
-            return [self.unwrap(x) for x in obj]
-        if isinstance(obj, tuple):
-            return tuple(self.unwrap(x) for x in obj)
-        if isinstance(obj, set):
-            return {self.unwrap(x) for x in obj}
-        if isinstance(obj, dict):
-            return {self.unwrap(k): self.unwrap(v) for k, v in obj.items()}
-        return obj
-
-    def get_name_obf(self, node: ast.AST):
-        if isinstance(node, ast.Name):
-            return node.id
-
-        elif isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-            if node.func.id == "__import__":
-                return self.visit(node.args[0])
+        return core_unwrap(obj)
 
     def check_size(self, obj):
         val = self.unwrap(obj)
         if isinstance(val, (str, bytes, list, dict, set, tuple, range)):
-            if len(val) > self.max_allocation:
-                LOGGER.debug(f"Size limit exceeded for {type(val).__name__}")
+            try:
+                if len(val) > self.max_allocation:
+                    LOGGER.debug(f"Size limit exceeded for {type(val).__name__}")
+                    return True
+            except OverflowError:
+                LOGGER.debug(f"Size overflow for {type(val).__name__}")
                 return True
         elif isinstance(val, (int, float)):
             num_limit = max(self.max_allocation, 2**63 - 1)
@@ -114,7 +207,12 @@ class SafeEval(ast.NodeVisitor):
         left_res = self.visit(node.left)
         right_res = self.visit(node.right)
 
-        if left_res is None or right_res is None:
+        if (
+            left_res is None
+            or right_res is None
+            or is_symbolic_ref(left_res)
+            or is_symbolic_ref(right_res)
+        ):
             return None
 
         left = self.unwrap(left_res)
@@ -125,8 +223,24 @@ class SafeEval(ast.NodeVisitor):
         if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)) and right == 0:
             return None
 
-        if op is operator.pow and isinstance(right, (int, float)) and abs(right) > self.max_allocation:
-            return None
+        if op is operator.pow:
+            if (
+                isinstance(left, int)
+                and not isinstance(left, bool)
+                and isinstance(right, int)
+                and not isinstance(right, bool)
+            ):
+                if right > 0 and abs(left) > 1 and right * abs(left).bit_length() > 128:
+                    return None
+                if abs(right) > 1024:
+                    return None
+            elif isinstance(right, (int, float)) and abs(right) > 1024:
+                return None
+
+        if op is operator.lshift:
+            if isinstance(left, int) and isinstance(right, int):
+                if right < 0 or right > 64 or (left != 0 and abs(left).bit_length() + right > 64):
+                    return None
 
         if op is operator.mul:
             if isinstance(left, (str, bytes, list, tuple)) and isinstance(right, int):
@@ -157,13 +271,13 @@ class SafeEval(ast.NodeVisitor):
 
         value_res = self.visit(node.value)
 
-        if value_res is None:
+        if value_res is None or is_symbolic_ref(value_res):
             return None
 
         value = self.unwrap(value_res)
         _slice_res = self.visit(node.slice)
 
-        if _slice_res is None:
+        if _slice_res is None or is_symbolic_ref(_slice_res):
             return None
 
         _slice = self.unwrap(_slice_res)
@@ -182,7 +296,7 @@ class SafeEval(ast.NodeVisitor):
             result: Any = None
             for value in node.values:
                 res = self.visit(value)
-                if res is None:
+                if res is None or is_symbolic_ref(res):
                     return None
                 result = self.unwrap(res)
                 if not result:
@@ -193,7 +307,7 @@ class SafeEval(ast.NodeVisitor):
             result = None
             for value in node.values:
                 res = self.visit(value)
-                if res is None:
+                if res is None or is_symbolic_ref(res):
                     return None
                 result = self.unwrap(res)
                 if result:
@@ -201,13 +315,22 @@ class SafeEval(ast.NodeVisitor):
             return NoneValue() if result is None else result
 
     def visit_Slice(self, node: ast.Slice):
+        lower = self.visit(node.lower) if node.lower is not None else NoneValue()
+        upper = self.visit(node.upper) if node.upper is not None else NoneValue()
+        step = self.visit(node.step) if node.step is not None else NoneValue()
 
-        lower = self.visit(node.lower)
-        upper = self.visit(node.upper)
-        step = self.visit(node.step)
+        if (
+            lower is None
+            or upper is None
+            or step is None
+            or is_symbolic_ref(lower)
+            or is_symbolic_ref(upper)
+            or is_symbolic_ref(step)
+        ):
+            return None
 
-        if all(i is None for i in [lower, upper, step]):
-            return
+        if node.lower is None and node.upper is None and node.step is None:
+            return slice(None, None, None)
 
         return slice(self.unwrap(lower), self.unwrap(upper), self.unwrap(step))
 
@@ -220,7 +343,7 @@ class SafeEval(ast.NodeVisitor):
 
         operand = self.visit(node.operand)
 
-        if operand is None:
+        if operand is None or is_symbolic_ref(operand):
             return None
 
         try:
@@ -236,47 +359,89 @@ class SafeEval(ast.NodeVisitor):
         if isinstance(node.func, ast.Name):
             func_name = node.func.id
 
-            if func_name in FUNCS:
+            if func_name in FUNCS and self._is_builtin_usable(func_name):
                 func = FUNCS[func_name]
+                if any(isinstance(a, ast.Starred) for a in node.args) or any(
+                    kw.arg is None for kw in node.keywords
+                ):
+                    return None
 
                 args_res = [self.visit(arg) for arg in node.args]
                 kwargs_res = {
                     kwarg.arg: self.visit(kwarg.value)
                     for kwarg in node.keywords
-                    if kwarg.arg
+                    if kwarg.arg is not None
                 }
                 if any(arg is None for arg in args_res):
                     return None
 
-                if any(v is None for v in kwargs_res.values()):
+                if any(v is None or is_symbolic_ref(v) for v in kwargs_res.values()):
                     return None
 
                 if func is map:
+                    if len(args_res) != 2 or kwargs_res:
+                        return None
                     fn = args_res[0]
+                    if is_symbolic_ref(args_res[1]):
+                        return None
                     arg = self.unwrap(args_res[1])
                     if isinstance(fn, LambdaType) and isinstance(
-                        arg, supported_iterator
+                        arg, (list, tuple, str, bytes, range, set, dict)
                     ):
                         if self.check_size(arg):
                             return None
-
-                        return [self.exec_custom_func(fn, [x]) for x in arg]  # type: ignore
+                        mapped = [self.exec_custom_func(fn, [x]) for x in arg]
+                        if any(v is None for v in mapped):
+                            return None
+                        return mapped
+                    return None
 
                 elif func is zip:
-                    if all(i is not None for i in args_res):
-                        args = [self.unwrap(a) for a in args_res]
-                        for a in args:
-                            if isinstance(a, supported_iterator) and self.check_size(a):
-                                return None
-                        return list(zip(*args))
+                    if kwargs_res or any(is_symbolic_ref(a) for a in args_res):
+                        return None
+                    args = [self.unwrap(a) for a in args_res]
+                    for a in args:
+                        if isinstance(
+                            a, (list, tuple, str, bytes, range, set, dict)
+                        ) and self.check_size(a):
+                            return None
+                    try:
+                        res = list(zip(*args))
+                        if self.check_size(res):
+                            return None
+                        return res
+                    except Exception:
+                        return None
 
                 else:
-
+                    if any(is_symbolic_ref(a) for a in args_res):
+                        return None
                     try:
                         args = [self.unwrap(a) for a in args_res]
                         kwargs = {k: self.unwrap(v) for k, v in kwargs_res.items()}
+                        if func is bytes and not kwargs and len(args) == 1:
+                            if isinstance(args[0], int) and not isinstance(
+                                args[0], bool
+                            ):
+                                if args[0] < 0 or args[0] > self.max_allocation:
+                                    return None
                         if func is pow and len(args) == 2 and not kwargs:
-                            if isinstance(args[1], (int, float)) and abs(args[1]) > self.max_allocation:
+                            if (
+                                isinstance(args[0], int)
+                                and not isinstance(args[0], bool)
+                                and isinstance(args[1], int)
+                                and not isinstance(args[1], bool)
+                            ):
+                                if (
+                                    args[1] > 0
+                                    and abs(args[0]) > 1
+                                    and args[1] * abs(args[0]).bit_length() > 128
+                                ):
+                                    return None
+                            if (
+                                isinstance(args[1], (int, float))
+                                and abs(args[1]) > 1024
+                            ):
                                 return None
                         res = func(*args, **kwargs)
 
@@ -303,11 +468,16 @@ class SafeEval(ast.NodeVisitor):
                 if not isinstance(func, LambdaType):
                     return None
 
+                if any(isinstance(a, ast.Starred) for a in node.args) or any(
+                    kw.arg is None for kw in node.keywords
+                ):
+                    return None
+
                 args_res = [self.visit(arg) for arg in node.args]
                 kwargs_res = {
                     kwarg.arg: self.visit(kwarg.value)
                     for kwarg in node.keywords
-                    if kwarg.arg
+                    if kwarg.arg is not None
                 }
 
                 if any(arg is None for arg in args_res):
@@ -320,72 +490,80 @@ class SafeEval(ast.NodeVisitor):
                 kwargs = {k: self.unwrap(v) for k, v in kwargs_res.items()}
 
                 res = self.exec_custom_func(func, args, kwargs)  # type: ignore
-                if self.check_size(res):
+                if res is not None and self.check_size(res):
                     return None
                 return res
 
             elif (
-                node.args
+                self._is_builtin_usable(func_name)
+                and len(node.args) == 1
+                and not node.keywords
                 and isinstance(node.args[0], ast.Constant)
                 and isinstance(node.args[0].value, str)
             ):
 
                 if func_name == "eval":
                     try:
-                        parsed = ast.parse(node.args[0].value)
+                        parsed = ast.parse(node.args[0].value, mode="eval")
                     except SyntaxError:
                         return None
-                    if not parsed.body:
-                        return None
-                    nd = parsed.body[0]
-
-                    if isinstance(nd, ast.Expr):
-                        return self.visit(nd.value)
+                    return self.visit(parsed.body)
 
                 elif func_name == "__import__":
                     return ImportSymbol(node.args[0].value)
 
         elif isinstance(node.func, ast.Attribute):
-
-            result = self.visit(node.func)
-
-            if result is not None:
-                if self.check_size(result):
-                    return None
-
-                return result
-
             attr_name = node.func.attr
 
             if (
                 attr_name == "fromhex"
                 and isinstance(node.func.value, ast.Name)
                 and node.func.value.id == "bytes"
+                and self._is_builtin_usable("bytes")
                 and len(node.args) == 1
                 and not node.keywords
             ):
                 arg_res = self.visit(node.args[0])
-                if arg_res is not None:
+                if arg_res is not None and not is_symbolic_ref(arg_res):
                     arg_val = self.unwrap(arg_res)
                     if isinstance(arg_val, str) and len(arg_val) <= self.max_allocation * 2:
                         try:
-                            res = bytes.fromhex(arg_val)
-                            if self.check_size(res):
+                            hex_res = bytes.fromhex(arg_val)
+                            if self.check_size(hex_res):
                                 return None
-                            return res
+                            return hex_res
                         except ValueError:
                             return None
 
-            if attr_name in ATTR:
+            if (
+                attr_name in ATTR
+                and not node.keywords
+                and not any(isinstance(a, ast.Starred) for a in node.args)
+            ):
                 val_res = self.visit(node.func.value)
-                if val_res is not None:
+                if val_res is not None and not is_symbolic_ref(val_res):
                     value = self.unwrap(val_res)
                     try:
                         args_res = [self.visit(arg) for arg in node.args]
-                        if any(arg is None for arg in args_res):
+                        if any(arg is None or is_symbolic_ref(arg) for arg in args_res):
                             return None
 
                         args = [self.unwrap(a) for a in args_res]
+                        if (
+                            attr_name == "join"
+                            and isinstance(value, str)
+                            and len(args) == 1
+                        ):
+                            seq = args[0]
+                            if isinstance(seq, (list, tuple, set)):
+                                est = sum(len(s) for s in seq if isinstance(s, str)) + len(
+                                    value
+                                ) * max(0, len(seq) - 1)
+                                if est > self.max_allocation:
+                                    return None
+                            elif isinstance(seq, str):
+                                if len(seq) * (len(value) + 1) > self.max_allocation:
+                                    return None
 
                         func = getattr(value, attr_name)
                         result = func(*args)
@@ -417,119 +595,87 @@ class SafeEval(ast.NodeVisitor):
         if mod_name not in WHITELIST or attr_name not in WHITELIST[mod_name]:
             return None
 
+        if node.keywords or any(isinstance(a, ast.Starred) for a in node.args):
+            return None
+
         func = WHITELIST[mod_name][attr_name]
         args_res = [self.visit(arg) for arg in node.args]
 
-        if any(arg is None for arg in args_res):
+        if any(arg is None or is_symbolic_ref(arg) for arg in args_res):
             return None
 
         args = [self.unwrap(a) for a in args_res]
 
         try:
             if (
-                mod_name == "zlib"
+                mod_name in {"zlib", "gzip", "bz2", "lzma", "brotli", "blosc", "zstd"}
                 and attr_name == "decompress"
-                and len(args) == 1
-                and isinstance(args[0], (bytes, bytearray))
             ):
-                d_zlib = zlib.decompressobj()
-                result = d_zlib.decompress(
-                    args[0], max_length=self.max_allocation
-                )
-                if d_zlib.unconsumed_tail:
-                    LOGGER.debug("zlib decompression exceeded max_allocation")
+                if len(args) != 1 or not isinstance(args[0], (bytes, bytearray)):
                     return None
-            elif (
-                mod_name == "gzip"
-                and attr_name == "decompress"
-                and len(args) == 1
-                and isinstance(args[0], (bytes, bytearray))
-            ):
-                d_gzip = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
-                result = d_gzip.decompress(
-                    args[0], max_length=self.max_allocation
-                )
-                if d_gzip.unconsumed_tail:
-                    LOGGER.debug("gzip decompression exceeded max_allocation")
-                    return None
-            elif (
-                mod_name == "bz2"
-                and attr_name == "decompress"
-                and len(args) == 1
-                and isinstance(args[0], (bytes, bytearray))
-            ):
-                d_bz2 = bz2.BZ2Decompressor()
-                result = d_bz2.decompress(
-                    args[0], max_length=self.max_allocation
-                )
-                if not d_bz2.eof:
-                    LOGGER.debug("bz2 decompression exceeded max_allocation")
-                    return None
-            elif (
-                mod_name == "lzma"
-                and attr_name == "decompress"
-                and len(args) == 1
-                and isinstance(args[0], (bytes, bytearray))
-            ):
-                d_lzma = lzma.LZMADecompressor()
-                result = d_lzma.decompress(
-                    args[0], max_length=self.max_allocation
-                )
-                if not d_lzma.eof:
-                    LOGGER.debug("lzma decompression exceeded max_allocation")
-                    return None
-            elif (
-                mod_name == "brotli"
-                and attr_name == "decompress"
-                and len(args) == 1
-                and isinstance(args[0], (bytes, bytearray))
-            ):
-                d_brotli = brotli.Decompressor()
-                result = d_brotli.process(
-                    bytes(args[0]), output_buffer_limit=self.max_allocation
-                )
-                if not d_brotli.is_finished() or len(result) > self.max_allocation:
-                    LOGGER.debug("brotli decompression exceeded max_allocation")
-                    return None
-            elif (
-                mod_name == "blosc"
-                and attr_name == "decompress"
-                and len(args) == 1
-                and isinstance(args[0], (bytes, bytearray))
-            ):
-                nbytes, _, _ = blosc.get_cbuffer_sizes(args[0])
-                if nbytes > self.max_allocation:
-                    LOGGER.debug("blosc decompression exceeded max_allocation")
-                    return None
-                result = func(*args)
-            elif (
-                mod_name == "zstd"
-                and attr_name == "decompress"
-                and len(args) == 1
-                and isinstance(args[0], (bytes, bytearray))
-            ):
-                raw_z = bytes(args[0])
-                if len(raw_z) >= 6 and raw_z[:4] == b"\x28\xb5\x2f\xfd":
-                    fhd = raw_z[4]
-                    fcs_flag = (fhd >> 6) & 0x3
-                    single_seg = (fhd >> 5) & 0x1
-                    did_len = 1 if (fhd & 0x3) == 1 else (2 if (fhd & 0x3) == 2 else (4 if (fhd & 0x3) == 3 else 0))
-                    win_len = 0 if single_seg else 1
-                    fcs_off = 5 + win_len + did_len
-                    fcs_size = {0: (1 if single_seg else 0), 1: 2, 2: 4, 3: 8}[fcs_flag]
-                    if fcs_size > 0 and len(raw_z) >= fcs_off + fcs_size:
-                        if fcs_size == 1:
-                            fcs = raw_z[fcs_off]
-                        elif fcs_size == 2:
-                            fcs = struct.unpack_from("<H", raw_z, fcs_off)[0] + 256
-                        elif fcs_size == 4:
-                            fcs = struct.unpack_from("<I", raw_z, fcs_off)[0]
-                        else:
-                            fcs = struct.unpack_from("<Q", raw_z, fcs_off)[0]
-                        if fcs > self.max_allocation:
+                if mod_name == "zlib":
+                    d_zlib = zlib.decompressobj()
+                    result = d_zlib.decompress(
+                        args[0], max_length=self.max_allocation
+                    )
+                    if d_zlib.unconsumed_tail:
+                        LOGGER.debug("zlib decompression exceeded max_allocation")
+                        return None
+                elif mod_name == "gzip":
+                    d_gzip = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+                    result = d_gzip.decompress(
+                        args[0], max_length=self.max_allocation
+                    )
+                    if d_gzip.unconsumed_tail:
+                        LOGGER.debug("gzip decompression exceeded max_allocation")
+                        return None
+                elif mod_name == "bz2":
+                    d_bz2 = bz2.BZ2Decompressor()
+                    result = d_bz2.decompress(
+                        args[0], max_length=self.max_allocation
+                    )
+                    if not d_bz2.eof:
+                        LOGGER.debug("bz2 decompression exceeded max_allocation")
+                        return None
+                elif mod_name == "lzma":
+                    d_lzma = lzma.LZMADecompressor()
+                    result = d_lzma.decompress(
+                        args[0], max_length=self.max_allocation
+                    )
+                    if not d_lzma.eof:
+                        LOGGER.debug("lzma decompression exceeded max_allocation")
+                        return None
+                elif mod_name == "brotli":
+                    d_brotli = brotli.Decompressor()
+                    result = d_brotli.process(
+                        bytes(args[0]), output_buffer_limit=self.max_allocation
+                    )
+                    if not d_brotli.is_finished() or len(result) > self.max_allocation:
+                        LOGGER.debug("brotli decompression exceeded max_allocation")
+                        return None
+                elif mod_name == "blosc":
+                    nbytes, _, _ = blosc.get_cbuffer_sizes(args[0])
+                    if nbytes > self.max_allocation:
+                        LOGGER.debug("blosc decompression exceeded max_allocation")
+                        return None
+                    result = func(*args)
+                else:  # zstd
+                    raw_z = bytes(args[0])
+                    if _stdlib_zstd is not None:
+                        d_zstd = _stdlib_zstd.ZstdDecompressor()
+                        result = d_zstd.decompress(
+                            raw_z, max_length=self.max_allocation
+                        )
+                        if not d_zstd.eof:
                             LOGGER.debug("zstd decompression exceeded max_allocation")
                             return None
-                result = func(*args)
+                    else:
+                        if not _is_zstd_single_frame_bounded(
+                            raw_z, self.max_allocation
+                        ):
+                            LOGGER.debug("zstd frame missing bounded size header")
+                            return None
+                        result = func(*args)
             elif mod_name == "math" and attr_name == "factorial":
                 if (
                     len(args) != 1
@@ -557,12 +703,10 @@ class SafeEval(ast.NodeVisitor):
 
         return None
 
-        return None
-
     def visit_Constant(self, node: ast.Constant):
         if node.value is None:
             return NoneValue()
-        return SymbolicValue(node.value, node)
+        return SymbolicValue(node.value)
 
     def visit_Name(self, node: ast.Name):
         if (entry := self.ctx.get(node.id)) is not None:
@@ -580,8 +724,12 @@ class SafeEval(ast.NodeVisitor):
         return res
 
     def visit_Set(self, node: ast.Set):
-        res = set([self.visit(elt) for elt in node.elts])
-        if any(v is None for v in res):
+        res_items = [self.visit(elt) for elt in node.elts]
+        if any(v is None for v in res_items):
+            return None
+        try:
+            res = set(res_items)
+        except TypeError:
             return None
         if self.check_size(res):
             return None
@@ -599,7 +747,7 @@ class SafeEval(ast.NodeVisitor):
 
         cond_res = self.visit(node.test)
 
-        if cond_res is None:
+        if cond_res is None or is_symbolic_ref(cond_res):
             return None
 
         cond = self.unwrap(cond_res)
@@ -615,14 +763,14 @@ class SafeEval(ast.NodeVisitor):
 
         try:
             left_res = self.visit(node.left)
-            if left_res is None:
+            if left_res is None or is_symbolic_ref(left_res):
                 return None
 
             left = self.unwrap(left_res)
 
             for i, op in enumerate(node.ops):
                 right_res = self.visit(node.comparators[i])
-                if right_res is None:
+                if right_res is None or is_symbolic_ref(right_res):
                     return None
 
                 right = self.unwrap(right_res)
@@ -645,7 +793,7 @@ class SafeEval(ast.NodeVisitor):
         if val_res is None:
             return None
 
-        if isinstance(val_res, (LambdaType, ImportSymbol)):
+        if is_symbolic_ref(val_res):
             return None
 
         val = self.unwrap(val_res)

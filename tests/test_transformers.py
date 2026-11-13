@@ -1,7 +1,5 @@
 from noctyra.transformers import (
     ConstsTransformer,
-    BasicFunctions,
-    BasicAttributes,
     LCTransformer,
     ConditionSimplifier,
     NameReplacer,
@@ -34,9 +32,7 @@ def transform(code: str) -> str:
             CollectionsTransformer,
             BuiltinFolder,
             DictDispatchSimplifier,
-            BasicFunctions,
             ExecUnpacker,
-            BasicAttributes,
             FStringTransformer,
             StringFormatTransformer,
             LCTransformer,
@@ -739,7 +735,7 @@ def test_zip_bomb_protection():
     code = f"import zlib\nx = zlib.decompress({payload!r})"
     tree = ast.parse(code)
     pipeline = TransformerPipeline(
-        transformers=[ConstsTransformer, BasicFunctions],
+        transformers=[ConstsTransformer],
         max_allocation=50,
     )
     out = ast.unparse(pipeline.visit(tree))
@@ -988,7 +984,7 @@ def test_brotli_zstd_blosc_zip_bomb_protection():
         code = f"import {mod_name}\nx = {mod_name}.decompress({data!r})"
         tree = ast.parse(code)
         pipeline = TransformerPipeline(
-            transformers=[ConstsTransformer, BasicFunctions],
+            transformers=[ConstsTransformer],
             max_allocation=50,
         )
         out = ast.unparse(pipeline.visit(tree))
@@ -1061,4 +1057,361 @@ first = arr[0]
     assert "[b''] * 800" in out
     assert "n = 800" in out
     assert "first = b''" in out
+
+
+# -- Audit regression & security tests --
+
+
+def test_consts_keeps_lazy_iterators_and_store_subscript():
+    code = """
+r = range(5)
+z = zip([1, 2], [3, 4])
+m = map(str, [1, 2])
+arr = [10, 20, 30]
+arr[0] = 99
+x = arr[0]
+d = dict(zip(["a", "b"], [1, 2]))
+"""
+    out = transform(code)
+    assert "r = range(5)" in out
+    assert "z = zip(" in out
+    assert "m = map(" in out
+    assert "arr[0] = 99" in out
+    assert "x = 10" not in out
+    assert "d = {'a': 1, 'b': 2}" in out
+
+
+def test_symbolic_truthiness_and_shadowed_builtins():
+    code = """
+import os
+fn = lambda x: x + 1
+a = bool(os)
+b = bool(fn)
+c = 1 if os else 2
+d = 1 if fn else 2
+if os:
+    print("os_ok")
+if fn:
+    print("fn_ok")
+
+def shadowed(chr, len, eval):
+    return chr(65), len("abc"), eval("1 + 2")
+
+f = lambda a, b=10: a + b
+g = lambda x, *, y=5: x + y
+ok1 = f(1)
+ok2 = g(2)
+bad1 = f()
+bad2 = g(2, 3)
+bad_set = set([[]])
+"""
+    out = transform(code)
+    assert "a = False" not in out
+    assert "b = False" not in out
+    assert "c = 2" not in out
+    assert "d = 2" not in out
+    assert "os_ok" in out
+    assert "fn_ok" in out
+    assert "return (chr(65), len('abc'), eval('1 + 2'))" in out
+    assert "ok1 = 11" in out
+    assert "ok2 = 7" in out
+    assert "bad1 = f()" in out
+    assert "bad2 = g(2, 3)" in out
+    assert "bad_set = set([[]])" in out
+
+
+def test_partial_slice_and_dos_bounds():
+    import zlib
+    import zstd
+    from noctyra.transformers.safe_eval import _is_zstd_single_frame_bounded
+
+    raw_payload = b"A" * 150_000
+    zlib_bomb = zlib.compress(raw_payload)
+    raw_deflate_bomb = zlib_bomb[2:-4]
+    parts_expr = "[" + ", ".join(["'a'"] * 200) + "]"
+    code = f"""
+import zlib
+def f(i):
+    s = "abcdefg"
+    return s[i:5], s[2:i]
+big_shift = 1 << 10000000
+big_pow = 2 ** 10000000
+big_bytes = bytes(10000000)
+big_zip = zip([1, 2], range(10000000))
+unk_zip = zip([1, 2], unknown)
+b1 = zlib.decompress({zlib_bomb!r})
+b2 = zlib.decompress({raw_deflate_bomb!r}, -15)
+b3 = zlib.decompress({zlib_bomb!r}, wbits=15)
+fmt1 = "%.9999999f" % 1.5
+fmt2 = "%*d" % (9999999, 1)
+fmt3 = "%(k)9999999s" % {{"k": "a"}}
+big_join = ("x" * 1000).join(reversed({parts_expr}))
+"""
+    out = transform(code)
+    assert "'abcdefg'[i:5]" in out
+    assert "'abcdefg'[2:i]" in out
+    assert "'abcde'" not in out
+    assert "1 << 10000000" in out
+    assert "2 ** 10000000" in out
+    assert "bytes(10000000)" in out
+    assert "zip(" in out
+    assert "A" * 1000 not in out
+    assert "%.9999999f" in out
+    assert "%*d" in out
+    assert "%(k)9999999s" in out
+
+    z_small = zstd.compress(b"B" * 100)
+    assert _is_zstd_single_frame_bounded(z_small, 200) is True
+    assert _is_zstd_single_frame_bounded(z_small, 50) is False
+    # Unknown FCS header (magic + FHD without single_seg/fcs + payload) must be rejected
+    no_fcs_frame = b"\x28\xb5\x2f\xfd\x00\x00"
+    assert _is_zstd_single_frame_bounded(no_fcs_frame, 100_000) is False
+    # Trailing / concatenated second frame must be rejected
+    assert _is_zstd_single_frame_bounded(z_small + z_small, 100_000) is False
+
+
+def test_comprehensions_generator_and_cartesian_guard():
+    code = """
+g = (x * 2 for x in [1, 2])
+nxt = next((x for x in [1, 2]))
+bad_unpack = [(a, b) for a, b, c in [(1, 2)]]
+unk_filter = [x for x in [1, 2] if pred(x)]
+big_cart = [x + y for x in range(1000) for y in range(1000)]
+"""
+    out = transform(code)
+    assert "g = (x * 2 for x in [1, 2])" in out
+    assert "nxt = next(" in out
+    assert "for a, b, c in [(1, 2)]" in out
+    assert "if pred(x)" in out
+    assert "for x in range(1000) for y in range(1000)" in out
+
+
+def test_control_flow_ternary_and_dce_edge_cases():
+    code = """
+from __future__ import annotations
+
+x = x
+try:
+    z = unknown + 1
+except NameError:
+    z = 0
+t1 = 1 if side_effect() else 1
+if side_effect():
+    y = 1
+else:
+    y = 1
+"""
+    out = transform(code)
+    assert "from __future__ import annotations" in out
+    assert "x = x" in out
+    assert "except NameError:" in out
+    assert "side_effect()" in out
+    assert out.count("side_effect()") == 2
+
+
+def test_scoping_aliasing_walrus_and_exec_reuse():
+    import ast
+    from noctyra.transformers.ExecUnpacker import ExecUnpacker
+
+    code = """
+a = 1
+b = 2
+a, b = b, a
+swap_res = (a, b)
+
+tbl = [10, 20]
+alias = tbl
+tbl.append(30)
+n = len(tbl)
+first_alias = alias[0]
+
+def walrus_case():
+    w = 10
+    if (w := 20) > 0:
+        pass
+    return w
+
+def try_case():
+    val = 1
+    try:
+        val = 2
+        risky()
+    except Exception:
+        val = 3
+    return val
+
+def finally_case():
+    v = 1
+    try:
+        pass
+    finally:
+        v = 9
+    return v
+"""
+    out = transform(code)
+    assert "swap_res = (2, 1)" in out
+    assert "n = len(tbl)" in out
+    assert "first_alias = alias[0]" in out
+    assert "return 10" not in out
+    assert "return 1" not in out
+
+    unpacker = ExecUnpacker()
+    m1 = ast.parse("class C:\n    x = 1\n")
+    m2 = ast.parse("y = C.x\n")
+    unpacker.run(m1)
+    res2 = ast.unparse(unpacker.run(m2))
+    assert res2 == "y = C.x"
+
+
+def test_inliner_imports_ordering_keywords_and_collisions():
+    from noctyra.transformers.Imports import ImportAliasFolder
+
+    inliner_code = '''"""Module doc."""
+from __future__ import annotations
+__builtins__["inj"] = 1
+json = make_fake()
+ok_mod = __import__("math")
+real = __import__("json")
+kw1 = __import__("class")
+kw2 = getattr(obj, "return")
+'''
+    out = transform(inliner_code)
+    compile(out, "<inliner_test>", "exec")
+    assert out.index('"""Module doc."""') < out.index("from __future__ import annotations")
+    assert out.index("from __future__ import annotations") < out.index("import math")
+    assert "ok_mod = math" in out
+    assert "__builtins__['inj'] = 1" in out
+    assert "real = __import__('json')" in out
+    assert "__import__('class')" in out
+    assert "getattr(obj, 'return')" in out
+
+    imp_code = """
+import math as m
+from mod1 import x as a
+from mod2 import x as b
+
+def shadow_math():
+    math = 123
+    return m.sqrt(4) + math
+
+res = (a, b)
+"""
+    import ast
+
+    imp_out = ast.unparse(ImportAliasFolder().run(ast.parse(imp_code)))
+    assert "from mod2 import x as b" in imp_out
+    assert "res = (x, b)" in imp_out
+    assert "m.sqrt(4)" in imp_out
+
+
+def test_lambda_lp_guards_and_renamer_edges():
+    import ast
+    from noctyra.transformers.LambdaLP import LambdaLP
+
+    lp_code = """
+a = (lambda x, y=10: x + y)(z)
+b = (lambda *args: args[0])(z)
+c = (lambda x: x)(*items)
+d = (lambda x: x + x)(f())
+e = (lambda x: 42)(f())
+g = (lambda y: list(map(lambda x: x + y, items)))(x)
+"""
+    lp_out = ast.unparse(LambdaLP().run(ast.parse(lp_code)))
+    assert "a = z + 10" in lp_out
+    assert "(lambda *args: args[0])(z)" in lp_out
+    assert "(lambda x: x)(*items)" in lp_out
+    assert "(lambda x: x + x)(f())" in lp_out
+    assert "(lambda x: 42)(f())" in lp_out
+    assert "(lambda y: list(map(lambda x: x + y, items)))(x)" in lp_out
+
+    ren_code = """
+import math as g
+
+class Box:
+    def method(self, alpha=1):
+        return alpha
+
+def f():
+    global g
+    val = int(g.sqrt(9))
+    g = 123
+    return val
+
+def h():
+    return g
+
+res = (f(), h(), make_box().method(alpha=2))
+"""
+    # Also verify runtime semantics of renamed global alias match original
+    g_code = """
+import math as g
+def f():
+    global g
+    val = int(g.sqrt(9))
+    g = 123
+    return val
+def h():
+    return g
+print((f(), h()))
+"""
+    import contextlib
+    import io
+
+    g_out = rename(g_code, mode="all")
+    buf1, buf2 = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(buf1):
+        exec(g_code, {})
+    with contextlib.redirect_stdout(buf2):
+        exec(g_out, {})
+    assert buf1.getvalue() == buf2.getvalue() == "(3, 123)\n"
+
+    ren_out = rename(ren_code, mode="all")
+    assert "alpha=1" in ren_out
+    assert "method(alpha=2)" in ren_out
+
+
+def test_cli_pipeline_single_dir_errors_and_stdout(tmp_path, monkeypatch, capsys):
+    import sys
+    from noctyra.cli import _build_parser, _deobfuscate_code, main as cli_main
+
+    parser = _build_parser()
+    args = parser.parse_args(["dummy.py", "-q"])
+    src = "x = (lambda a, b=10: a + b)(z)\ny = 2 + 3\n"
+    deobf, _, _ = _deobfuscate_code(src, args)
+    assert "z + 10" in deobf
+    assert "= 5" in deobf
+
+    # Single file CLI run -> output file
+    in_file = tmp_path / "obf.py"
+    out_file = tmp_path / "clean.py"
+    in_file.write_text("a = 10 + 20\n", encoding="utf-8")
+    monkeypatch.setattr(
+        sys, "argv", ["noctyra", str(in_file), "-o", str(out_file), "-q"]
+    )
+    cli_main()
+    assert "= 30" in out_file.read_text(encoding="utf-8")
+
+    # Directory batch with valid, invalid-UTF8, and SyntaxError files + --stdout
+    in_dir = tmp_path / "in_dir"
+    out_dir = tmp_path / "out_dir"
+    in_dir.mkdir()
+    (in_dir / "good.py").write_text("k = 3 * 7\n", encoding="utf-8")
+    (in_dir / "bad_utf8.py").write_bytes(b"\xff\xfe\x00\x80")
+    (in_dir / "bad_syntax.py").write_text("def broken(:\n", encoding="utf-8")
+
+    monkeypatch.setattr(
+        sys, "argv", ["noctyra", str(in_dir), "-o", str(out_dir), "-q"]
+    )
+    cli_main()
+    assert "= 21" in (out_dir / "good.py").read_text(encoding="utf-8")
+    assert not (out_dir / "bad_utf8.py").exists()
+    assert not (out_dir / "bad_syntax.py").exists()
+
+    monkeypatch.setattr(
+        sys, "argv", ["noctyra", str(in_dir), "--stdout", "-q"]
+    )
+    cli_main()
+    captured = capsys.readouterr().out
+    assert "= 21" in captured
+
 

@@ -1,3 +1,4 @@
+from noctyra.core import is_symbolic_ref, to_node
 from noctyra.core.Transformer import BaseTransformer
 from noctyra.utils import COMP_OPS, IMMUTABLE_TYPES, LOGGER
 import ast
@@ -13,7 +14,7 @@ class ConditionSimplifier(BaseTransformer):
 
         for val in node.values:
             res = self.eval(val)
-            if res is None:
+            if res is None or is_symbolic_ref(res):
                 remaining.append(val)
                 last_const = None
                 continue
@@ -50,7 +51,7 @@ class ConditionSimplifier(BaseTransformer):
     def visit_Compare(self, node: ast.Compare):
         self.generic_visit(node)
         left_res = self.eval(node.left)
-        if left_res is None:
+        if left_res is None or is_symbolic_ref(left_res):
             return node
 
         left = self.unwrap(left_res)
@@ -58,7 +59,7 @@ class ConditionSimplifier(BaseTransformer):
 
         for op, comparator in zip(node.ops, node.comparators):
             right_res = self.eval(comparator)
-            if right_res is None:
+            if right_res is None or is_symbolic_ref(right_res):
                 return node
 
             right = self.unwrap(right_res)
@@ -87,7 +88,9 @@ class ConditionSimplifier(BaseTransformer):
         self.generic_visit(node)
         result_res = self.eval(node)
 
-        if result_res is not None:
-            return ast.Constant(value=self.unwrap(result_res))
+        if result_res is not None and not is_symbolic_ref(result_res):
+            folded = to_node(self.unwrap(result_res))
+            if folded is not None:
+                return ast.copy_location(folded, node)
 
         return node

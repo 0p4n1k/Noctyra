@@ -1,16 +1,14 @@
 from typing import Generic, TypeVar, Any, Optional
 import copy
 import ast
+import math
 
 T = TypeVar("T")
 
 
 class SymbolicValue(Generic[T]):
-    def __init__(
-        self, value: T, origin_node: Optional[ast.AST] = None, **metadata
-    ) -> None:
+    def __init__(self, value: T, **metadata: Any) -> None:
         self.value = value
-        self.origin_node = origin_node
         self.metadata = metadata
 
     def __repr__(self):
@@ -30,7 +28,7 @@ class NoneValue(SymbolicValue[None]):
 
 class ImportSymbol(SymbolicValue[None]):
     def __init__(self, module: str, member: str | None = None) -> None:
-        super().__init__(None, _type = '_import')
+        super().__init__(None, _type="_import")
         self.module = module
         self.member = member
 
@@ -53,5 +51,71 @@ class LambdaType(SymbolicValue[None]):
     def get_body(self) -> ast.AST:
         return copy.deepcopy(self.body)
 
-    def __call__(self, evaluator, *args: Any, **kwargs: Any) -> Any:
-        return evaluator.exec_custom_func(self, args, kwargs)
+
+def is_symbolic_ref(obj: Any) -> bool:
+    """Return True if obj or any nested element is a symbolic callable/import."""
+    if isinstance(obj, (ImportSymbol, LambdaType)):
+        return True
+    if isinstance(obj, SymbolicValue):
+        return is_symbolic_ref(obj.value)
+    if isinstance(obj, (list, tuple, set)):
+        return any(is_symbolic_ref(x) for x in obj)
+    if isinstance(obj, dict):
+        return any(is_symbolic_ref(k) or is_symbolic_ref(v) for k, v in obj.items())
+    return False
+
+
+def unwrap(obj: Any) -> Any:
+    """Unwrap SymbolicValue wrappers while preserving ImportSymbol and LambdaType."""
+    if isinstance(obj, (ImportSymbol, LambdaType)):
+        return obj
+    if isinstance(obj, SymbolicValue):
+        return unwrap(obj.value)
+    if isinstance(obj, list):
+        return [unwrap(x) for x in obj]
+    if isinstance(obj, tuple):
+        return tuple(unwrap(x) for x in obj)
+    if isinstance(obj, set):
+        return {unwrap(x) for x in obj}
+    if isinstance(obj, dict):
+        return {unwrap(k): unwrap(v) for k, v in obj.items()}
+    return obj
+
+
+def to_node(value: Any) -> Optional[ast.expr]:
+    """Convert an evaluated constant or literal container to an AST expression."""
+    if isinstance(value, (ImportSymbol, LambdaType)):
+        return None
+    if isinstance(value, SymbolicValue):
+        return to_node(value.value)
+    if isinstance(value, float) and (math.isnan(value) or math.isinf(value)):
+        return None
+    if value is None or isinstance(value, (bool, int, float, str, bytes)):
+        return ast.Constant(value=value)
+    if isinstance(value, list):
+        elts = [to_node(x) for x in value]
+        if any(e is None for e in elts):
+            return None
+        return ast.List(elts=[e for e in elts if e is not None], ctx=ast.Load())
+    if isinstance(value, tuple):
+        elts = [to_node(x) for x in value]
+        if any(e is None for e in elts):
+            return None
+        return ast.Tuple(elts=[e for e in elts if e is not None], ctx=ast.Load())
+    if isinstance(value, set):
+        elts = [to_node(x) for x in value]
+        if any(e is None for e in elts):
+            return None
+        return ast.Set(elts=[e for e in elts if e is not None])
+    if isinstance(value, dict):
+        keys: list[Optional[ast.expr]] = []
+        vals: list[ast.expr] = []
+        for k, v in value.items():
+            kn = to_node(k)
+            vn = to_node(v)
+            if kn is None or vn is None:
+                return None
+            keys.append(kn)
+            vals.append(vn)
+        return ast.Dict(keys=keys, values=vals)
+    return None

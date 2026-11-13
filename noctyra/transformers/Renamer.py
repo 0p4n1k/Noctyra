@@ -49,6 +49,7 @@ class _Scope:
     nonlocals_declared: set[str] = field(default_factory=set)
     mapping: dict[str, str] = field(default_factory=dict)
     children: dict[int, _Scope] = field(default_factory=dict)  # id(node) -> _Scope
+    reassigned_funcs: set[str] = field(default_factory=set)
 
 
 class _ScopeCollector(ast.NodeVisitor):
@@ -85,6 +86,8 @@ class _ScopeCollector(ast.NodeVisitor):
             return
         # Keep the more specific kind if already bound (e.g. func/cls/arg over var)
         existing = self.current.bindings.get(name)
+        if existing is not None:
+            self.current.reassigned_funcs.add(name)
         if existing is None or existing == "var":
             self.current.bindings[name] = symbol_kind
 
@@ -276,6 +279,11 @@ class _ScopeCollector(ast.NodeVisitor):
         self._bind_target(node.target)
         self.visit(node.target)
 
+    def visit_Delete(self, node: ast.Delete) -> None:
+        for target in node.targets:
+            self._bind_target(target)
+            self.visit(target)
+
     def visit_NamedExpr(self, node: ast.NamedExpr) -> None:
         self.visit(node.value)
         self._bind_target(node.target)
@@ -328,7 +336,7 @@ class IdentifierRenamer(BaseTransformer):
         self._scopes_by_node: dict[int, _Scope] = {}
         self._module_scope: _Scope | None = None
         self._current_scope: _Scope | None = None
-        self._func_param_maps: dict[tuple[int, str], dict[str, str]] = {}
+        self._unresolved_kwarg_names: set[str] = set()
 
     def _should_rename(self, name: str, scope: _Scope) -> bool:
         if self.mode == "none":
@@ -338,6 +346,11 @@ class IdentifierRenamer(BaseTransformer):
         if not name or keyword.iskeyword(name) or keyword.issoftkeyword(name):
             return False
         if is_dunder(name) or name in _BUILTINS or name in scope.protected:
+            return False
+        if (
+            scope.bindings.get(name) == "arg"
+            and name in self._unresolved_kwarg_names
+        ):
             return False
         if self.mode == "obfuscated":
             return is_obfuscated_name(name)
@@ -407,15 +420,49 @@ class IdentifierRenamer(BaseTransformer):
     ) -> _Scope | None:
         cur = scope
         while cur is not None:
+            if func_name in cur.globals_declared and cur is not self._module_scope:
+                cur = self._module_scope
+                continue
             if cur.kind != "class" or cur is scope:
-                for child in cur.children.values():
-                    if (
-                        isinstance(child.node, (ast.FunctionDef, ast.AsyncFunctionDef))
-                        and child.original_name == func_name
-                    ):
-                        return child
+                matches = [
+                    child
+                    for child in cur.children.values()
+                    if isinstance(child.node, (ast.FunctionDef, ast.AsyncFunctionDef))
+                    and child.original_name == func_name
+                ]
+                if len(matches) == 1 and func_name not in cur.reassigned_funcs:
+                    return matches[0]
+                if matches:
+                    return None
+                if func_name in cur.bindings or func_name in cur.protected:
+                    return None
             cur = cur.parent
         return None
+
+    def _collect_unresolved_kwargs(self, node: ast.AST) -> set[str]:
+        unresolved: set[str] = set()
+
+        def walk(n: ast.AST, scope: _Scope | None) -> None:
+            next_scope = self._scopes_by_node.get(id(n), scope)
+            if isinstance(n, ast.Call) and n.keywords:
+                target_scope = (
+                    self._resolve_func_scope(n.func.id, scope)
+                    if isinstance(n.func, ast.Name)
+                    else None
+                )
+                if target_scope is None:
+                    for kw in n.keywords:
+                        if kw.arg is not None:
+                            unresolved.add(kw.arg)
+                elif any(kw.arg is None for kw in n.keywords):
+                    for name, kind in target_scope.bindings.items():
+                        if kind == "arg":
+                            unresolved.add(name)
+            for child in ast.iter_child_nodes(n):
+                walk(child, next_scope)
+
+        walk(node, self._module_scope)
+        return unresolved
 
     def visit_Module(self, node: ast.Module) -> ast.AST:
         if self.mode == "none":
@@ -423,13 +470,13 @@ class IdentifierRenamer(BaseTransformer):
 
         self._counters = {"var": 0, "arg": 0, "func": 0, "cls": 0}
         self._used_names = set(_BUILTINS)
-        self._func_param_maps = {}
 
         collector = _ScopeCollector()
         collector.visit(node)
 
         self._scopes_by_node = collector.scopes_by_node
         self._module_scope = collector.module_scope
+        self._unresolved_kwarg_names = self._collect_unresolved_kwargs(node)
 
         if self._module_scope is not None:
             self._collect_kept_names(self._module_scope)
@@ -609,7 +656,7 @@ class IdentifierRenamer(BaseTransformer):
 
     def visit_alias(self, node: ast.alias) -> ast.AST:
         if node.asname and self._current_scope is not None:
-            new_name = self._current_scope.mapping.get(node.asname)
+            new_name = self._resolve_name(node.asname, self._current_scope)
             if new_name is not None:
                 node.asname = new_name
         return node

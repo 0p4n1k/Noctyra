@@ -1,43 +1,10 @@
 from __future__ import annotations
 
 import ast
+from noctyra.core import is_symbolic_ref
 from noctyra.core.Transformer import BaseTransformer
 from noctyra.utils import LOGGER
-
-
-def _is_pure_rhs(node: ast.AST) -> bool:
-    if isinstance(node, (ast.Constant, ast.Name)):
-        return True
-    if isinstance(node, ast.UnaryOp):
-        return _is_pure_rhs(node.operand)
-    if isinstance(node, ast.BinOp):
-        return _is_pure_rhs(node.left) and _is_pure_rhs(node.right)
-    if isinstance(node, ast.BoolOp):
-        return all(_is_pure_rhs(v) for v in node.values)
-    if isinstance(node, ast.Compare):
-        return _is_pure_rhs(node.left) and all(
-            _is_pure_rhs(c) for c in node.comparators
-        )
-    if isinstance(node, ast.IfExp):
-        return (
-            _is_pure_rhs(node.test)
-            and _is_pure_rhs(node.body)
-            and _is_pure_rhs(node.orelse)
-        )
-    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-        return all(_is_pure_rhs(e) for e in node.elts)
-    if isinstance(node, ast.Dict):
-        return all(
-            (k is None or _is_pure_rhs(k)) and _is_pure_rhs(v)
-            for k, v in zip(node.keys, node.values)
-        )
-    if isinstance(node, ast.JoinedStr):
-        return all(
-            isinstance(v, ast.Constant)
-            or (isinstance(v, ast.FormattedValue) and _is_pure_rhs(v.value))
-            for v in node.values
-        )
-    return False
+from noctyra.utils.Shared import is_pure_expr
 
 
 def _collect_loaded_names(node: ast.AST) -> set[str]:
@@ -60,7 +27,6 @@ def _collect_used_names_in_func(
 
 
 class DeadCodeRemover(BaseTransformer):
-    active = True
 
     def _ensure_nonempty_bodies(self, node: ast.AST) -> None:
         for child in ast.walk(node):
@@ -94,7 +60,9 @@ class DeadCodeRemover(BaseTransformer):
                     continue
                 stmt.names = kept_aliases
             elif isinstance(stmt, ast.ImportFrom):
-                if any(alias.name == "*" for alias in stmt.names):
+                if stmt.module == "__future__" or any(
+                    alias.name == "*" for alias in stmt.names
+                ):
                     new_body.append(stmt)
                     continue
                 kept_aliases = [
@@ -115,7 +83,7 @@ class DeadCodeRemover(BaseTransformer):
         super().visit_If(node)
 
         test_res = self.eval(node.test)
-        if test_res is None:
+        if test_res is None or is_symbolic_ref(test_res):
             return node
 
         test_value = self.unwrap(test_res)
@@ -127,7 +95,11 @@ class DeadCodeRemover(BaseTransformer):
         super().visit_While(node)
 
         test_res = self.eval(node.test)
-        if test_res is not None and not bool(self.unwrap(test_res)):
+        if (
+            test_res is not None
+            and not is_symbolic_ref(test_res)
+            and not bool(self.unwrap(test_res))
+        ):
             LOGGER.debug("Removed dead while loop")
             return node.orelse
 
@@ -139,7 +111,7 @@ class DeadCodeRemover(BaseTransformer):
         truncated: list[ast.stmt] = []
         for stmt in stmts:
             truncated.append(stmt)
-            if isinstance(stmt, (ast.Return, ast.Raise)):
+            if isinstance(stmt, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
                 break
 
         cleaned: list[ast.stmt] = []
@@ -149,7 +121,7 @@ class DeadCodeRemover(BaseTransformer):
                 and len(stmt.targets) == 1
                 and isinstance(stmt.targets[0], ast.Name)
                 and stmt.targets[0].id not in used_names
-                and _is_pure_rhs(stmt.value)
+                and is_pure_expr(stmt.value, allow_containers=True)
             ):
                 LOGGER.debug(f"Removed dead local assignment: {stmt.targets[0].id}")
                 continue

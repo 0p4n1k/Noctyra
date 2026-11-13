@@ -18,8 +18,6 @@ from rich.text import Text
 from noctyra.core import TransformerPipeline
 from noctyra.transformers import (
     AlgebraicSimplifier,
-    BasicAttributes,
-    BasicFunctions,
     BasicInliner,
     BuiltinFolder,
     CollectionsTransformer,
@@ -30,7 +28,6 @@ from noctyra.transformers import (
     DictDispatchSimplifier,
     ExecUnpacker,
     FStringTransformer,
-    Generic,
     IdentifierRenamer,
     ImportAliasFolder,
     LambdaLP,
@@ -195,9 +192,7 @@ def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
             CollectionsTransformer,
             BuiltinFolder,
             DictDispatchSimplifier,
-            BasicFunctions,
             ExecUnpacker,
-            BasicAttributes,
             FStringTransformer,
             StringFormatTransformer,
             LCTransformer,
@@ -206,7 +201,6 @@ def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
             ControlFlowSimplifier,
             NameReplacer,
             DeadCodeRemover,
-            Generic,
             LambdaLP,
         ],
         iterations=args.iterations,
@@ -302,17 +296,20 @@ def main() -> None:
         total_new_lines = 0
         start = time.perf_counter()
 
-        def _process_batch() -> None:
+        def _process_batch(advance=None) -> None:
             nonlocal total_orig, total_new, total_orig_lines, total_new_lines
+            stdout_console = Console()
             for src in py_files:
                 rel = src.relative_to(input_path)
                 dst = out_dir / rel
                 dst.parent.mkdir(parents=True, exist_ok=True)
-                orig = src.read_text(encoding="utf-8")
                 try:
+                    orig = src.read_text(encoding="utf-8")
                     res, orig_sz, new_sz = _deobfuscate_code(orig, args)
-                except SyntaxError as exc:
-                    LOGGER.error(f"SyntaxError in {src}: {exc}")
+                except (SyntaxError, UnicodeDecodeError, black.InvalidInput) as exc:
+                    LOGGER.error(f"Failed processing {src}: {exc}")
+                    if advance is not None:
+                        advance()
                     continue
                 dst.write_text(res, encoding="utf-8")
                 total_orig += orig_sz
@@ -320,7 +317,17 @@ def main() -> None:
                 total_orig_lines += len(orig.splitlines())
                 total_new_lines += len(res.splitlines())
                 if args.diff:
-                    _print_diff(Console(), orig, res, str(rel))
+                    _print_diff(stdout_console, orig, res, str(rel))
+                if args.stdout:
+                    header = f"# === {rel} ===\n"
+                    if sys.stdout.isatty():
+                        stdout_console.print(
+                            Syntax(header + res, "python", theme="monokai", line_numbers=True)
+                        )
+                    else:
+                        print(header + res, end="")
+                if advance is not None:
+                    advance()
 
         if args.quiet:
             _process_batch()
@@ -335,23 +342,7 @@ def main() -> None:
                 task = progress.add_task(
                     "Deobfuscating directory...", total=len(py_files)
                 )
-                for src in py_files:
-                    rel = src.relative_to(input_path)
-                    dst = out_dir / rel
-                    dst.parent.mkdir(parents=True, exist_ok=True)
-                    orig = src.read_text(encoding="utf-8")
-                    try:
-                        res, orig_sz, new_sz = _deobfuscate_code(orig, args)
-                        dst.write_text(res, encoding="utf-8")
-                        total_orig += orig_sz
-                        total_new += new_sz
-                        total_orig_lines += len(orig.splitlines())
-                        total_new_lines += len(res.splitlines())
-                        if args.diff:
-                            _print_diff(Console(), orig, res, str(rel))
-                    except SyntaxError as exc:
-                        LOGGER.error(f"SyntaxError in {src}: {exc}")
-                    progress.advance(task)
+                _process_batch(lambda: progress.advance(task))
 
         elapsed_ms = (time.perf_counter() - start) * 1000.0
         if not args.quiet:
@@ -368,7 +359,18 @@ def main() -> None:
             )
         return
 
-    code = input_path.read_text(encoding="utf-8")
+    try:
+        code = input_path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        err_console.print(
+            Panel(
+                f"Failed to decode [bold]{input_path}[/bold]: {exc}",
+                title="UnicodeDecodeError",
+                border_style="red",
+            )
+        )
+        sys.exit(1)
+
     start = time.perf_counter()
 
     try:
@@ -380,7 +382,7 @@ def main() -> None:
                 spinner="dots",
             ):
                 res, orig_ast_size, new_ast_size = _deobfuscate_code(code, args)
-    except SyntaxError as exc:
+    except (SyntaxError, black.InvalidInput) as exc:
         err_console.print(
             Panel(
                 f"Failed to parse [bold]{input_path}[/bold]: {exc}",

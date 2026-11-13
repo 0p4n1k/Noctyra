@@ -84,6 +84,8 @@ class _ScopeAnalyzer:
         self.candidate_targets: dict[str, ast.Name] = {}
         self.assign_counts: dict[str, int] = {}
         self.invalidated: set[str] = set()
+        self.escaped: set[str] = set()
+        self.safe_subscript_reads: set[int] = set()
 
     def analyze(self) -> _ScopeFrame:
         if isinstance(self.scope_node, (ast.FunctionDef, ast.AsyncFunctionDef)):
@@ -94,8 +96,11 @@ class _ScopeAnalyzer:
 
         valid_tables: dict[str, TableValue] = {}
         for name, table in self.candidates.items():
-            if name not in self.invalidated and self.assign_counts.get(name, 0) == 1:
-                valid_tables[name] = table
+            if name in self.invalidated or self.assign_counts.get(name, 0) != 1:
+                continue
+            if isinstance(table, (dict, list)) and name in self.escaped:
+                continue
+            valid_tables[name] = table
 
         invalidated = set(self.invalidated)
         for name in self.assign_counts:
@@ -132,9 +137,20 @@ class _ScopeAnalyzer:
             self._scan_children(node, in_nested_scope=False)
             return
 
-        if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            if id(node) not in self.safe_subscript_reads:
+                self.escaped.add(node.id)
+
+        elif isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
             if self.candidate_targets.get(node.id) is not node:
                 self.invalidated.add(node.id)
+
+        elif (
+            isinstance(node, ast.Subscript)
+            and isinstance(node.ctx, ast.Load)
+            and isinstance(node.value, ast.Name)
+        ):
+            self.safe_subscript_reads.add(id(node.value))
 
         elif (
             isinstance(node, ast.Subscript)
@@ -186,6 +202,8 @@ class DictDispatchSimplifier(BaseTransformer):
         if create_ctx:
             self.ctx = Context(parent=old_ctx)
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                for local_name in self._collect_func_locals(node):
+                    self.ctx.invalidate(local_name)
                 for arg_name in _iter_arg_names(node.args):
                     self.ctx.invalidate(arg_name)
         try:

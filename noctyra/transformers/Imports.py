@@ -28,6 +28,10 @@ class _ImportScope:
     aliases: dict[str, str] = field(
         default_factory=dict
     )  # asname -> target dotted name
+    alias_sources: dict[str, str] = field(
+        default_factory=dict
+    )  # asname -> origin key for collision detection
+    globals_declared: set[str] = field(default_factory=set)
     bound_names: set[str] = field(default_factory=set)
     reassigned: set[str] = field(default_factory=set)
     children: dict[int, _ImportScope] = field(default_factory=dict)
@@ -51,6 +55,11 @@ class _ImportAnalyzer(ast.NodeVisitor):
 
     def _bind(self, name: str) -> None:
         if self.current is None:
+            return
+        if name in self.current.globals_declared and self.root is not None:
+            if name in self.root.aliases:
+                self.root.reassigned.add(name)
+            self.root.bound_names.add(name)
             return
         if name in self.current.aliases:
             self.current.reassigned.add(name)
@@ -178,20 +187,46 @@ class _ImportAnalyzer(ast.NodeVisitor):
             return
         for alias in node.names:
             if alias.asname:
-                self.current.aliases[alias.asname] = alias.name
+                target_scope = (
+                    self.root
+                    if alias.asname in self.current.globals_declared
+                    and self.root is not None
+                    else self.current
+                )
+                target_scope.aliases[alias.asname] = alias.name
+                target_scope.alias_sources[alias.asname] = f"import:{alias.name.split('.')[0]}"
             else:
                 self._bind(alias.name.split(".")[0])
 
     def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
         if self.current is None:
             return
+        mod = node.module or ""
         for alias in node.names:
             if alias.name == "*":
                 continue
             if alias.asname:
-                self.current.aliases[alias.asname] = alias.name
+                target_scope = (
+                    self.root
+                    if alias.asname in self.current.globals_declared
+                    and self.root is not None
+                    else self.current
+                )
+                target_scope.aliases[alias.asname] = alias.name
+                target_scope.alias_sources[alias.asname] = (
+                    f"from:{node.level}:{mod}:{alias.name}"
+                )
             else:
                 self._bind(alias.name)
+
+    def visit_Global(self, node: ast.Global) -> None:
+        if self.current is not None:
+            self.current.globals_declared.update(node.names)
+
+    def visit_Delete(self, node: ast.Delete) -> None:
+        for target in node.targets:
+            self._bind_target(target)
+            self.visit(target)
 
     def visit_Assign(self, node: ast.Assign) -> None:
         self.visit(node.value)
@@ -257,41 +292,81 @@ class ImportAliasFolder(BaseTransformer):
         self._current_scope: _ImportScope | None = None
         self._active_unfolds: dict[int, dict[str, str]] = {}
 
+    def _descendant_shadows(
+        self, scope: _ImportScope, top_target: str, source_key: str
+    ) -> bool:
+        for child in scope.children.values():
+            if top_target in child.bound_names:
+                return True
+            if (
+                top_target in child.aliases
+                and child.alias_sources.get(top_target) != source_key
+            ):
+                return True
+            if self._descendant_shadows(child, top_target, source_key):
+                return True
+        return False
+
     def _compute_unfolds(self, scope: _ImportScope) -> None:
         unfolds: dict[str, str] = {}
-        seen_targets: set[str] = set()
+        seen_sources: dict[str, str] = {}
         for asname, target in scope.aliases.items():
             if asname in scope.reassigned:
                 continue
             top_target = target.split(".")[0]
+            source_key = scope.alias_sources.get(asname, f"import:{top_target}")
             if keyword.iskeyword(top_target) or keyword.issoftkeyword(top_target):
                 continue
             if top_target in scope.bound_names:
                 continue
-            if top_target in scope.aliases and scope.aliases[top_target] != target:
+            if (
+                top_target in scope.aliases
+                and scope.alias_sources.get(top_target) != source_key
+            ):
                 continue
-            if top_target in seen_targets and target != top_target:
+            if (
+                top_target in seen_sources
+                and seen_sources[top_target] != source_key
+            ):
+                continue
+            if self._descendant_shadows(scope, top_target, source_key):
                 continue
             unfolds[asname] = target
-            seen_targets.add(top_target)
+            seen_sources[top_target] = source_key
         self._active_unfolds[id(scope)] = unfolds
         for child in scope.children.values():
             self._compute_unfolds(child)
 
     def _resolve_unfold(self, name: str, scope: _ImportScope | None) -> str | None:
         cur = scope
+        traversed: list[_ImportScope] = []
         while cur is not None:
             unfolds = self._active_unfolds.get(id(cur), {})
             if name in unfolds:
-                return unfolds[name]
+                target = unfolds[name]
+                top_target = target.split(".")[0]
+                source_key = cur.alias_sources.get(name, f"import:{top_target}")
+                for mid in traversed:
+                    if top_target in mid.bound_names:
+                        return None
+                    if (
+                        top_target in mid.aliases
+                        and mid.alias_sources.get(top_target) != source_key
+                    ):
+                        return None
+                return target
             if name in cur.bound_names or name in cur.aliases:
                 return None
+            traversed.append(cur)
             cur = cur.parent
             while cur is not None and cur.is_class:
+                traversed.append(cur)
                 cur = cur.parent
         return None
 
     def visit_Module(self, node: ast.Module) -> ast.AST:
+        self._active_unfolds = {}
+        self._scopes_by_node = {}
         analyzer = _ImportAnalyzer()
         analyzer.visit(node)
         self._scopes_by_node = analyzer.scopes_by_node

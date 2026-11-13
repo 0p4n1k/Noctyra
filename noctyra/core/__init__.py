@@ -1,4 +1,12 @@
-from .Symbolic import LambdaType, SymbolicValue, NoneValue, ImportSymbol
+from .Symbolic import (
+    LambdaType,
+    SymbolicValue,
+    NoneValue,
+    ImportSymbol,
+    is_symbolic_ref,
+    unwrap,
+    to_node,
+)
 from .Variable import Variable, supported_types, supported_iterator
 from .Pipeline import TransformerPipeline
 from .Context import Context
@@ -13,4 +21,7 @@ __all__ = [
     "SymbolicValue",
     "NoneValue",
     "ImportSymbol",
+    "is_symbolic_ref",
+    "unwrap",
+    "to_node",
 ]

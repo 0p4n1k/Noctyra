@@ -3,6 +3,7 @@ from __future__ import annotations
 import ast
 from typing import Any
 
+from noctyra.core import is_symbolic_ref
 from noctyra.core.Transformer import BaseTransformer
 from noctyra.utils import LOGGER
 
@@ -16,9 +17,23 @@ class ExecUnpacker(BaseTransformer):
         self._class_getters: dict[tuple[str, str], list[str]] = {}
         self._globals_store: dict[str, bytes | str] = {}
 
+    def run(
+        self,
+        node: ast.AST,
+        ctx: Any = None,
+        max_depth: int = 50,
+        max_allocation: int = 100_000,
+    ) -> ast.AST:
+        self._class_setters = {}
+        self._class_getters = {}
+        self._globals_store = {}
+        return super().run(
+            node, ctx=ctx, max_depth=max_depth, max_allocation=max_allocation
+        )
+
     def _eval_value(self, node: ast.AST) -> Any:
         res = self.eval(node)
-        if res is None:
+        if res is None or is_symbolic_ref(res):
             return None
         return self.unwrap(res)
 
@@ -171,7 +186,11 @@ class ExecUnpacker(BaseTransformer):
                         )
                 return node
 
-        if not isinstance(node.func, ast.Name) or node.func.id != "eval":
+        if (
+            not isinstance(node.func, ast.Name)
+            or node.func.id != "eval"
+            or not self._is_builtin_usable("eval")
+        ):
             return node
         if len(node.args) != 1 or node.keywords:
             return node
@@ -194,12 +213,17 @@ class ExecUnpacker(BaseTransformer):
         return parsed
 
     def _is_exec_call(self, call: ast.Call) -> bool:
-        if isinstance(call.func, ast.Name) and call.func.id == "exec":
+        if (
+            isinstance(call.func, ast.Name)
+            and call.func.id == "exec"
+            and self._is_builtin_usable("exec")
+        ):
             return True
         if (
             isinstance(call.func, ast.Attribute)
             and isinstance(call.func.value, ast.Name)
             and call.func.value.id in ("builtins", "__builtins__")
+            and self._is_builtin_usable(call.func.value.id)
             and call.func.attr == "exec"
         ):
             return True

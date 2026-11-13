@@ -1,73 +1,11 @@
 import ast
-from typing import Any
 
-from noctyra.core.Transformer import BaseTransformer
+from noctyra.core.Transformer import UNRESOLVED, BaseTransformer
 from noctyra.utils import IMMUTABLE_TYPES, LOGGER
-
-_UNRESOLVED = object()
 
 
 class BuiltinFolder(BaseTransformer):
     """Fold pure builtin calls into AST constants, lists, or dicts."""
-
-    def _within_allocation(self, value: Any) -> bool:
-        if isinstance(value, (str, bytes, list, tuple, dict, set)):
-            return len(value) <= self.max_allocation
-        return True
-
-    def _eval_expr(self, node: ast.AST | None) -> Any:
-        if node is None:
-            return _UNRESOLVED
-
-        res = self.eval(node)
-        if res is not None:
-            val = self.unwrap(res)
-            if self._within_allocation(val):
-                return val
-            return _UNRESOLVED
-
-        if isinstance(node, ast.Dict):
-            result: dict[Any, Any] = {}
-            for k_node, v_node in zip(node.keys, node.values):
-                if k_node is None:
-                    spread = self._eval_expr(v_node)
-                    if not isinstance(spread, dict):
-                        return _UNRESOLVED
-                    result.update(spread)
-                else:
-                    key = self._eval_expr(k_node)
-                    val = self._eval_expr(v_node)
-                    if key is _UNRESOLVED or val is _UNRESOLVED:
-                        return _UNRESOLVED
-                    try:
-                        result[key] = val
-                    except TypeError:
-                        return _UNRESOLVED
-                if len(result) > self.max_allocation:
-                    return _UNRESOLVED
-            return result
-
-        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
-            if len(node.elts) > self.max_allocation:
-                return _UNRESOLVED
-            items: list[Any] = []
-            for elt in node.elts:
-                if isinstance(elt, ast.Starred):
-                    return _UNRESOLVED
-                item = self._eval_expr(elt)
-                if item is _UNRESOLVED:
-                    return _UNRESOLVED
-                items.append(item)
-            if isinstance(node, ast.List):
-                return items
-            if isinstance(node, ast.Tuple):
-                return tuple(items)
-            try:
-                return set(items)
-            except TypeError:
-                return _UNRESOLVED
-
-        return _UNRESOLVED
 
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
@@ -76,10 +14,12 @@ class BuiltinFolder(BaseTransformer):
             return node
 
         func_name = node.func.id
+        if not self._is_builtin_usable(func_name):
+            return node
 
         if func_name == "int" and len(node.args) == 2:
-            s = self._eval_expr(node.args[0])
-            base = self._eval_expr(node.args[1])
+            s = self._eval_const_expr(node.args[0])
+            base = self._eval_const_expr(node.args[1])
             if (
                 isinstance(s, (str, bytes))
                 and isinstance(base, int)
@@ -97,8 +37,8 @@ class BuiltinFolder(BaseTransformer):
             return node
 
         if func_name in ("bin", "oct", "ascii", "repr") and len(node.args) == 1:
-            val = self._eval_expr(node.args[0])
-            if val is _UNRESOLVED or not isinstance(val, IMMUTABLE_TYPES):
+            val = self._eval_const_expr(node.args[0])
+            if val is UNRESOLVED or not isinstance(val, IMMUTABLE_TYPES):
                 return node
             try:
                 if func_name in ("bin", "oct"):
@@ -119,7 +59,7 @@ class BuiltinFolder(BaseTransformer):
             return node
 
         if func_name in ("any", "all") and len(node.args) == 1:
-            it = self._eval_expr(node.args[0])
+            it = self._eval_const_expr(node.args[0])
             if (
                 isinstance(it, (list, tuple, set, str, bytes, dict))
                 and len(it) <= self.max_allocation
@@ -130,7 +70,7 @@ class BuiltinFolder(BaseTransformer):
             return node
 
         if func_name == "sorted" and len(node.args) == 1:
-            it = self._eval_expr(node.args[0])
+            it = self._eval_const_expr(node.args[0])
             if (
                 isinstance(it, (list, tuple, set, str, bytes, dict))
                 and len(it) <= self.max_allocation
@@ -153,11 +93,12 @@ class BuiltinFolder(BaseTransformer):
                 isinstance(arg, ast.Call)
                 and isinstance(arg.func, ast.Name)
                 and arg.func.id == "zip"
+                and self._is_builtin_usable("zip")
                 and not arg.keywords
                 and len(arg.args) == 2
             ):
-                keys_seq = self._eval_expr(arg.args[0])
-                vals_seq = self._eval_expr(arg.args[1])
+                keys_seq = self._eval_const_expr(arg.args[0])
+                vals_seq = self._eval_const_expr(arg.args[1])
                 if (
                     isinstance(keys_seq, (list, tuple, str, bytes))
                     and isinstance(vals_seq, (list, tuple, str, bytes))
@@ -182,7 +123,7 @@ class BuiltinFolder(BaseTransformer):
                         f"Folded dict(zip(...)) into dict of {len(keys)} entries"
                     )
                     return ast.copy_location(ast.Dict(keys=keys, values=values), node)
-            pairs_seq = self._eval_expr(arg)
+            pairs_seq = self._eval_const_expr(arg)
             if (
                 isinstance(pairs_seq, (list, tuple))
                 and len(pairs_seq) <= self.max_allocation

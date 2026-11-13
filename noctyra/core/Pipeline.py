@@ -36,7 +36,7 @@ class TransformerPipeline(ast.NodeTransformer):
         current_node = node
 
         if self.iterations == 0:
-            last_size = len(ast.dump(current_node))
+            last_dump = ast.dump(current_node)
             cur = 1
             while True:
                 for transformer in self.transformers:
@@ -45,11 +45,13 @@ class TransformerPipeline(ast.NodeTransformer):
                     if new_node != current_node:
                         current_node = new_node
 
-                new_size = len(ast.dump(current_node))
-                if new_size == last_size:
+                new_dump = ast.dump(current_node)
+                if new_dump == last_dump:
                     break
-                last_size = new_size
-                LOGGER.info(f"Completed iteration {cur}/?, size of node: {new_size}")
+                last_dump = new_dump
+                LOGGER.info(
+                    f"Completed iteration {cur}/?, size of node: {len(new_dump)}"
+                )
                 cur += 1
 
                 if cur > self.max_iterations:

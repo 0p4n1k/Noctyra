@@ -1,7 +1,6 @@
 from typing import Callable, Any
 import binascii
 import operator
-import hashlib
 import base64
 import brotli
 import codecs
@@ -17,8 +16,6 @@ import ast
 
 IMMUTABLE_TYPES = (int, float, str, bytes, bool, type(None))
 
-h = hashlib.sha256()
-
 ATTR: dict[str, Callable] = {
     "decode": bytes.decode,
     "encode": str.encode,
@@ -33,7 +30,6 @@ ATTR: dict[str, Callable] = {
     "split": str.split,
     "strip": str.strip,
     "startswith": str.startswith,
-    "hexdigest": lambda x: x,
 }
 
 FUNCS: dict[str, Callable] = {
@@ -50,7 +46,6 @@ FUNCS: dict[str, Callable] = {
     "zip": zip,
     "all": all,
     "round": round,
-    "filter": filter,
     "range": range,
 }
 
@@ -155,3 +150,74 @@ WHITELIST: dict[str, dict[str, Callable[..., Any]]] = {
         "pow": math.pow,
     },
 }
+
+
+def is_pure_expr(node: ast.AST, *, allow_containers: bool = False) -> bool:
+    """Return True if evaluating node has no observable side effects (modulo NameError)."""
+    if isinstance(node, (ast.Constant, ast.Name)):
+        return True
+    if isinstance(node, ast.UnaryOp):
+        return is_pure_expr(node.operand, allow_containers=allow_containers)
+    if isinstance(node, ast.BinOp):
+        if isinstance(node.op, (ast.Div, ast.FloorDiv, ast.Mod)):
+            return False
+        if isinstance(node.op, (ast.Pow, ast.LShift)) and not (
+            isinstance(node.right, ast.Constant)
+            and isinstance(node.right.value, int)
+            and not isinstance(node.right.value, bool)
+            and 0 <= node.right.value <= 64
+        ):
+            return False
+        return is_pure_expr(
+            node.left, allow_containers=allow_containers
+        ) and is_pure_expr(node.right, allow_containers=allow_containers)
+    if isinstance(node, ast.BoolOp):
+        return all(
+            is_pure_expr(v, allow_containers=allow_containers) for v in node.values
+        )
+    if isinstance(node, ast.Compare):
+        return is_pure_expr(node.left, allow_containers=allow_containers) and all(
+            is_pure_expr(c, allow_containers=allow_containers)
+            for c in node.comparators
+        )
+    if isinstance(node, ast.IfExp):
+        return (
+            is_pure_expr(node.test, allow_containers=allow_containers)
+            and is_pure_expr(node.body, allow_containers=allow_containers)
+            and is_pure_expr(node.orelse, allow_containers=allow_containers)
+        )
+    if isinstance(node, ast.JoinedStr):
+        return all(
+            isinstance(v, ast.Constant)
+            or (
+                isinstance(v, ast.FormattedValue)
+                and is_pure_expr(v.value, allow_containers=allow_containers)
+                and (
+                    v.format_spec is None
+                    or is_pure_expr(v.format_spec, allow_containers=allow_containers)
+                )
+            )
+            for v in node.values
+        )
+    if allow_containers:
+        if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+            return all(is_pure_expr(e, allow_containers=True) for e in node.elts)
+        if isinstance(node, ast.Dict):
+            return all(
+                (k is None or is_pure_expr(k, allow_containers=True))
+                and is_pure_expr(v, allow_containers=True)
+                for k, v in zip(node.keys, node.values)
+            )
+    return False
+
+
+def is_pure_stmt(stmt: ast.stmt) -> bool:
+    if isinstance(stmt, ast.Pass):
+        return True
+    if isinstance(stmt, ast.Expr):
+        return is_pure_expr(stmt.value)
+    if isinstance(stmt, ast.Assign):
+        return all(isinstance(t, ast.Name) for t in stmt.targets) and is_pure_expr(
+            stmt.value
+        )
+    return False

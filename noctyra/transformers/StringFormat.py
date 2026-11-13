@@ -1,9 +1,13 @@
+from noctyra.core import is_symbolic_ref
 from noctyra.core.Transformer import BaseTransformer
 from noctyra.utils import LOGGER
 from typing import Any
 import ast
 import re
 import string
+
+_PCT_SPEC_RE = re.compile(r"%(?:\([^)]*\))?([#0\- +*]*(?:\d+|\*)?(?:\.(?:\d+|\*))?)")
+_PCT_SPEC_RE_B = re.compile(rb"%(?:\([^)]*\))?([#0\- +*]*(?:\d+|\*)?(?:\.(?:\d+|\*))?)")
 
 
 class StringFormatTransformer(BaseTransformer):
@@ -15,7 +19,7 @@ class StringFormatTransformer(BaseTransformer):
     def _eval_bytes_like(self, node: ast.AST) -> bytes | bytearray | None:
         max_alloc = self._max_alloc()
         res = self.eval(node)
-        if res is not None:
+        if res is not None and not is_symbolic_ref(res):
             val = self.unwrap(res)
             if isinstance(val, (bytes, bytearray)) and len(val) <= max_alloc:
                 return val
@@ -25,6 +29,7 @@ class StringFormatTransformer(BaseTransformer):
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Name)
             and node.func.id in ("bytearray", "bytes")
+            and self._is_builtin_usable(node.func.id)
         ):
             cls: type[bytes] | type[bytearray] = (
                 bytearray if node.func.id == "bytearray" else bytes
@@ -33,7 +38,7 @@ class StringFormatTransformer(BaseTransformer):
             for arg in node.args:
                 if isinstance(arg, ast.Starred):
                     s_res = self.eval(arg.value)
-                    if s_res is None:
+                    if s_res is None or is_symbolic_ref(s_res):
                         return None
                     s_val = self.unwrap(s_res)
                     if not isinstance(s_val, (list, tuple)) or len(s_val) > max_alloc:
@@ -42,6 +47,8 @@ class StringFormatTransformer(BaseTransformer):
                 else:
                     a_res = self.eval(arg)
                     if a_res is not None:
+                        if is_symbolic_ref(a_res):
+                            return None
                         a_val: Any = self.unwrap(a_res)
                     else:
                         a_val = self._eval_bytes_like(arg)
@@ -52,7 +59,7 @@ class StringFormatTransformer(BaseTransformer):
             call_kwargs: dict[str, Any] = {}
             for kw in node.keywords:
                 kw_res = self.eval(kw.value)
-                if kw_res is None:
+                if kw_res is None or is_symbolic_ref(kw_res):
                     return None
                 kw_val = self.unwrap(kw_res)
                 if kw.arg is None:
@@ -88,7 +95,7 @@ class StringFormatTransformer(BaseTransformer):
             return None
 
         recv_res = self.eval(node.func.value)
-        if recv_res is None:
+        if recv_res is None or is_symbolic_ref(recv_res):
             return None
 
         recv = self.unwrap(recv_res)
@@ -103,7 +110,7 @@ class StringFormatTransformer(BaseTransformer):
         for arg in node.args:
             if isinstance(arg, ast.Starred):
                 s_res = self.eval(arg.value)
-                if s_res is None:
+                if s_res is None or is_symbolic_ref(s_res):
                     return None
                 s_val = self.unwrap(s_res)
                 if not isinstance(s_val, (list, tuple)) or len(s_val) > max_alloc:
@@ -111,14 +118,14 @@ class StringFormatTransformer(BaseTransformer):
                 pos_args.extend(s_val)
             else:
                 arg_res = self.eval(arg)
-                if arg_res is None:
+                if arg_res is None or is_symbolic_ref(arg_res):
                     return None
                 pos_args.append(self.unwrap(arg_res))
 
         kw_args: dict[str, Any] = {}
         for kw in node.keywords:
             kw_res = self.eval(kw.value)
-            if kw_res is None:
+            if kw_res is None or is_symbolic_ref(kw_res):
                 return None
             kw_val = self.unwrap(kw_res)
             if kw.arg is None:
@@ -178,7 +185,7 @@ class StringFormatTransformer(BaseTransformer):
         for arg in node.args:
             if isinstance(arg, ast.Starred):
                 s_res = self.eval(arg.value)
-                if s_res is None:
+                if s_res is None or is_symbolic_ref(s_res):
                     return None
                 s_val = self.unwrap(s_res)
                 if not isinstance(s_val, (list, tuple)):
@@ -186,14 +193,14 @@ class StringFormatTransformer(BaseTransformer):
                 dec_args.extend(s_val)
             else:
                 arg_res = self.eval(arg)
-                if arg_res is None:
+                if arg_res is None or is_symbolic_ref(arg_res):
                     return None
                 dec_args.append(self.unwrap(arg_res))
 
         dec_kwargs: dict[str, Any] = {}
         for kw in node.keywords:
             kw_res = self.eval(kw.value)
-            if kw_res is None:
+            if kw_res is None or is_symbolic_ref(kw_res):
                 return None
             kw_val = self.unwrap(kw_res)
             if kw.arg is None:
@@ -236,7 +243,7 @@ class StringFormatTransformer(BaseTransformer):
             return node
 
         left_res = self.eval(node.left)
-        if left_res is None:
+        if left_res is None or is_symbolic_ref(left_res):
             return node
 
         left = self.unwrap(left_res)
@@ -248,17 +255,23 @@ class StringFormatTransformer(BaseTransformer):
             return node
 
         right_res = self.eval(node.right)
-        if right_res is None:
+        if right_res is None or is_symbolic_ref(right_res):
             return node
 
         right = self.unwrap(right_res)
 
         if isinstance(left, str):
-            for num_str in re.findall(r"%\s*[-+#0 ]*(\d+)", left):
-                if int(num_str) > max_alloc:
-                    return node
-            if "*" in left and isinstance(right, tuple):
-                for item in right:
+            for spec in _PCT_SPEC_RE.findall(left):
+                for num_str in re.findall(r"\d+", spec):
+                    if int(num_str) > max_alloc:
+                        return node
+            if "*" in left:
+                candidates = (
+                    right.values()
+                    if isinstance(right, dict)
+                    else (right if isinstance(right, tuple) else (right,))
+                )
+                for item in candidates:
                     if (
                         isinstance(item, int)
                         and not isinstance(item, bool)
@@ -266,11 +279,17 @@ class StringFormatTransformer(BaseTransformer):
                     ):
                         return node
         else:
-            for num_bytes in re.findall(rb"%\s*[-+#0 ]*(\d+)", left):
-                if int(num_bytes) > max_alloc:
-                    return node
-            if b"*" in left and isinstance(right, tuple):
-                for item in right:
+            for spec_b in _PCT_SPEC_RE_B.findall(left):
+                for num_bytes in re.findall(rb"\d+", spec_b):
+                    if int(num_bytes) > max_alloc:
+                        return node
+            if b"*" in left:
+                candidates_b = (
+                    right.values()
+                    if isinstance(right, dict)
+                    else (right if isinstance(right, tuple) else (right,))
+                )
+                for item in candidates_b:
                     if (
                         isinstance(item, int)
                         and not isinstance(item, bool)
