@@ -15,6 +15,15 @@ class NameReplacer(BaseTransformer):
 
         result_res = self.eval(node)
         if result_res is not None:
+            if (
+                isinstance(result_res, ImportSymbol)
+                and result_res.module.isidentifier()
+                and result_res.module != node.id
+            ):
+                LOGGER.debug(f"Resolved import alias: {node.id} -> {result_res.module}")
+                return ast.copy_location(
+                    ast.Name(id=result_res.module, ctx=node.ctx), node
+                )
             result = self.unwrap(result_res)
             if not isinstance(result_res, (LambdaType, ImportSymbol)) and isinstance(
                 result, IMMUTABLE_TYPES

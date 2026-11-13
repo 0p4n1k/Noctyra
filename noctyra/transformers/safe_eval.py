@@ -2,8 +2,11 @@ from noctyra.core import Variable, supported_types, supported_iterator
 from noctyra.utils import ATTR, BIN_OPS, UNARY_OPS, COMP_OPS, FUNCS, WHITELIST, LOGGER
 from noctyra.core import Context, LambdaType, SymbolicValue, NoneValue, ImportSymbol
 from typing import Any
-import operator
 import ast
+import bz2
+import lzma
+import operator
+import zlib
 
 
 class SafeEval(ast.NodeVisitor):
@@ -379,7 +382,60 @@ class SafeEval(ast.NodeVisitor):
                 args = [self.unwrap(a) for a in args_res]
 
                 try:
-                    result = func(*args)
+                    if (
+                        module.module == "zlib"
+                        and attr_name == "decompress"
+                        and len(args) == 1
+                        and isinstance(args[0], (bytes, bytearray))
+                    ):
+                        d_zlib = zlib.decompressobj()
+                        result = d_zlib.decompress(
+                            args[0], max_length=self.max_allocation
+                        )
+                        if d_zlib.unconsumed_tail:
+                            LOGGER.debug("zlib decompression exceeded max_allocation")
+                            return None
+                    elif (
+                        module.module == "gzip"
+                        and attr_name == "decompress"
+                        and len(args) == 1
+                        and isinstance(args[0], (bytes, bytearray))
+                    ):
+                        d_gzip = zlib.decompressobj(wbits=16 + zlib.MAX_WBITS)
+                        result = d_gzip.decompress(
+                            args[0], max_length=self.max_allocation
+                        )
+                        if d_gzip.unconsumed_tail:
+                            LOGGER.debug("gzip decompression exceeded max_allocation")
+                            return None
+                    elif (
+                        module.module == "bz2"
+                        and attr_name == "decompress"
+                        and len(args) == 1
+                        and isinstance(args[0], (bytes, bytearray))
+                    ):
+                        d_bz2 = bz2.BZ2Decompressor()
+                        result = d_bz2.decompress(
+                            args[0], max_length=self.max_allocation
+                        )
+                        if not d_bz2.eof:
+                            LOGGER.debug("bz2 decompression exceeded max_allocation")
+                            return None
+                    elif (
+                        module.module == "lzma"
+                        and attr_name == "decompress"
+                        and len(args) == 1
+                        and isinstance(args[0], (bytes, bytearray))
+                    ):
+                        d_lzma = lzma.LZMADecompressor()
+                        result = d_lzma.decompress(
+                            args[0], max_length=self.max_allocation
+                        )
+                        if not d_lzma.eof:
+                            LOGGER.debug("lzma decompression exceeded max_allocation")
+                            return None
+                    else:
+                        result = func(*args)
                     if not isinstance(result, supported_types):
                         return None
 

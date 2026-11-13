@@ -9,7 +9,9 @@ import blosc
 import zstd
 import zlib
 import gzip
+import html
 import lzma
+import math
 import bz2
 import ast
 
@@ -86,7 +88,38 @@ COMP_OPS: dict[Any, Callable] = {
     ast.NotIn: lambda x, y: x not in y,
 }
 
-WHITELIST: dict[str, dict[str, Callable[..., bytes]]] = {
+_SAFE_CODECS = frozenset(
+    {
+        "utf-8",
+        "utf8",
+        "ascii",
+        "latin-1",
+        "latin1",
+        "iso-8859-1",
+        "rot_13",
+        "rot-13",
+        "rot13",
+        "hex",
+        "hex_codec",
+        "base64",
+        "base64_codec",
+        "quopri",
+        "quopri_codec",
+        "uu",
+        "uu_codec",
+    }
+)
+
+
+def _safe_codecs_decode(
+    obj: Any, encoding: str = "utf-8", errors: str = "strict"
+) -> Any:
+    if encoding.lower().strip() not in _SAFE_CODECS:
+        raise ValueError(f"Codec '{encoding}' is not in safe whitelist")
+    return codecs.decode(obj, encoding, errors)
+
+
+WHITELIST: dict[str, dict[str, Callable[..., Any]]] = {
     "base64": {
         "b16decode": base64.b16decode,
         "b32decode": base64.b32decode,
@@ -103,5 +136,21 @@ WHITELIST: dict[str, dict[str, Callable[..., bytes]]] = {
     "blosc": {"decompress": blosc.decompress},
     "bytes": {"fromhex": bytes.fromhex},
     "binascii": {"unhexlify": binascii.unhexlify},
-    "codecs": {"decode": codecs.decode},
+    "codecs": {"decode": _safe_codecs_decode},
+    "html": {"unescape": html.unescape},
+    "math": {
+        "sqrt": math.sqrt,
+        "floor": math.floor,
+        "ceil": math.ceil,
+        "fabs": math.fabs,
+        "factorial": math.factorial,
+        "gcd": math.gcd,
+        "log": math.log,
+        "log2": math.log2,
+        "log10": math.log10,
+        "sin": math.sin,
+        "cos": math.cos,
+        "tan": math.tan,
+        "pow": math.pow,
+    },
 }

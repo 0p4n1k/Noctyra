@@ -704,3 +704,35 @@ e = bytes([65, 66]).decode()
     assert "c = b'hello world'" in out
     assert "d = 'OK'" in out
     assert "e = 'AB'" in out
+
+
+# -- whitelist hardening & math/html --
+
+
+def test_whitelist_math_html_and_import_alias_resolution():
+    code = """
+import math
+import html
+
+_m = math
+x = _m.sqrt(16)
+y = html.unescape("&lt;ok&gt;")
+"""
+    out = transform(code)
+    assert "x = 4.0" in out
+    assert "y = '<ok>'" in out
+    assert "import html" not in out
+
+
+def test_zip_bomb_protection():
+    import zlib
+
+    payload = zlib.compress(b"A" * 500)
+    code = f"import zlib\nx = zlib.decompress({payload!r})"
+    tree = ast.parse(code)
+    pipeline = TransformerPipeline(
+        transformers=[ConstsTransformer, BasicFunctions],
+        max_allocation=50,
+    )
+    out = ast.unparse(pipeline.visit(tree))
+    assert "zlib.decompress" in out
