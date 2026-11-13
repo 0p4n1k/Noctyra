@@ -26,6 +26,8 @@ class BasicAttributes(BaseTransformer):
 
                 try:
                     result = getattr(value, attr_name)(*args)
+                    if isinstance(result, (str, bytes, list, tuple, dict, set)) and len(result) > self.max_allocation:
+                        return node
                     LOGGER.debug(
                         f"Resolved attribute call: {type(value).__name__}.{attr_name} -> {result!r}"
                     )

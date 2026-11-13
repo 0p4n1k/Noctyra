@@ -3,9 +3,13 @@ from noctyra.utils import ATTR, BIN_OPS, UNARY_OPS, COMP_OPS, FUNCS, WHITELIST, 
 from noctyra.core import Context, LambdaType, SymbolicValue, NoneValue, ImportSymbol
 from typing import Any
 import ast
+import blosc
+import brotli
 import bz2
 import lzma
 import operator
+import re
+import struct
 import zlib
 
 
@@ -271,6 +275,9 @@ class SafeEval(ast.NodeVisitor):
                     try:
                         args = [self.unwrap(a) for a in args_res]
                         kwargs = {k: self.unwrap(v) for k, v in kwargs_res.items()}
+                        if func is pow and len(args) == 2 and not kwargs:
+                            if isinstance(args[1], (int, float)) and abs(args[1]) > self.max_allocation:
+                                return None
                         res = func(*args, **kwargs)
 
                         if self.check_size(res):
@@ -471,6 +478,68 @@ class SafeEval(ast.NodeVisitor):
                 if not d_lzma.eof:
                     LOGGER.debug("lzma decompression exceeded max_allocation")
                     return None
+            elif (
+                mod_name == "brotli"
+                and attr_name == "decompress"
+                and len(args) == 1
+                and isinstance(args[0], (bytes, bytearray))
+            ):
+                d_brotli = brotli.Decompressor()
+                result = d_brotli.process(
+                    bytes(args[0]), output_buffer_limit=self.max_allocation
+                )
+                if not d_brotli.is_finished() or len(result) > self.max_allocation:
+                    LOGGER.debug("brotli decompression exceeded max_allocation")
+                    return None
+            elif (
+                mod_name == "blosc"
+                and attr_name == "decompress"
+                and len(args) == 1
+                and isinstance(args[0], (bytes, bytearray))
+            ):
+                nbytes, _, _ = blosc.get_cbuffer_sizes(args[0])
+                if nbytes > self.max_allocation:
+                    LOGGER.debug("blosc decompression exceeded max_allocation")
+                    return None
+                result = func(*args)
+            elif (
+                mod_name == "zstd"
+                and attr_name == "decompress"
+                and len(args) == 1
+                and isinstance(args[0], (bytes, bytearray))
+            ):
+                raw_z = bytes(args[0])
+                if len(raw_z) >= 6 and raw_z[:4] == b"\x28\xb5\x2f\xfd":
+                    fhd = raw_z[4]
+                    fcs_flag = (fhd >> 6) & 0x3
+                    single_seg = (fhd >> 5) & 0x1
+                    did_len = 1 if (fhd & 0x3) == 1 else (2 if (fhd & 0x3) == 2 else (4 if (fhd & 0x3) == 3 else 0))
+                    win_len = 0 if single_seg else 1
+                    fcs_off = 5 + win_len + did_len
+                    fcs_size = {0: (1 if single_seg else 0), 1: 2, 2: 4, 3: 8}[fcs_flag]
+                    if fcs_size > 0 and len(raw_z) >= fcs_off + fcs_size:
+                        if fcs_size == 1:
+                            fcs = raw_z[fcs_off]
+                        elif fcs_size == 2:
+                            fcs = struct.unpack_from("<H", raw_z, fcs_off)[0] + 256
+                        elif fcs_size == 4:
+                            fcs = struct.unpack_from("<I", raw_z, fcs_off)[0]
+                        else:
+                            fcs = struct.unpack_from("<Q", raw_z, fcs_off)[0]
+                        if fcs > self.max_allocation:
+                            LOGGER.debug("zstd decompression exceeded max_allocation")
+                            return None
+                result = func(*args)
+            elif mod_name == "math" and attr_name == "factorial":
+                if (
+                    len(args) != 1
+                    or not isinstance(args[0], int)
+                    or isinstance(args[0], bool)
+                    or args[0] < 0
+                    or args[0] > min(self.max_allocation, 1000)
+                ):
+                    return None
+                result = func(args[0])
             else:
                 result = func(*args)
             if not isinstance(result, supported_types):
@@ -596,6 +665,9 @@ class SafeEval(ast.NodeVisitor):
                 spec = self.unwrap(spec_res)
                 if not isinstance(spec, str):
                     return None
+                for num_str in re.findall(r"\d+", spec):
+                    if int(num_str) > self.max_allocation:
+                        return None
                 formatted = format(val, spec)
             else:
                 formatted = str(val)

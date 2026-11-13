@@ -134,7 +134,9 @@ class StringFormatTransformer(BaseTransformer):
 
         has_nested = False
         try:
-            for _, _, format_spec, _ in string.Formatter().parse(recv):
+            for _, field_name, format_spec, _ in string.Formatter().parse(recv):
+                if field_name and ("._" in field_name or field_name.startswith("_")):
+                    return None
                 if format_spec:
                     if "{" in format_spec:
                         has_nested = True

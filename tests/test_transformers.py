@@ -971,5 +971,49 @@ n = 1526539672 + -1526539671
     assert "n = 1" in out
 
 
+# -- security hardening --
+
+
+def test_brotli_zstd_blosc_zip_bomb_protection():
+    import blosc
+    import brotli
+    import zstd
+
+    payload = b"A" * 500
+    for mod_name, data in [
+        ("brotli", brotli.compress(payload)),
+        ("zstd", zstd.compress(payload)),
+        ("blosc", blosc.compress(payload)),
+    ]:
+        code = f"import {mod_name}\nx = {mod_name}.decompress({data!r})"
+        tree = ast.parse(code)
+        pipeline = TransformerPipeline(
+            transformers=[ConstsTransformer, BasicFunctions],
+            max_allocation=50,
+        )
+        out = ast.unparse(pipeline.visit(tree))
+        assert f"{mod_name}.decompress" in out
+
+
+def test_pow_factorial_and_fstring_width_dos_protection():
+    code = """
+import math
+a = pow(2, 10000000)
+b = math.factorial(5000)
+c = f"{1:99999999}"
+"""
+    out = transform(code)
+    assert "pow(2, 10000000)" in out
+    assert "math.factorial(5000)" in out
+    assert "f'{1:99999999}'" in out
+
+
+def test_str_format_blocks_dunder_field_traversal():
+    code = 'x = "{0.__class__}".format("abc")'
+    out = transform(code)
+    assert "{0.__class__}" in out
+
+
+
 
 

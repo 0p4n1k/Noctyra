@@ -280,7 +280,12 @@ def main() -> None:
 
     if input_path.is_dir():
         out_dir = Path("out" if args.output == "out.py" else args.output)
-        py_files = sorted(input_path.rglob("*.py"))
+        resolved_root = input_path.resolve()
+        py_files = sorted(
+            p
+            for p in input_path.rglob("*.py")
+            if not p.is_symlink() and p.resolve().is_relative_to(resolved_root)
+        )
         if not py_files:
             err_console.print(
                 Panel(
