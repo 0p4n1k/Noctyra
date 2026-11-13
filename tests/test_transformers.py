@@ -1014,6 +1014,17 @@ def test_str_format_blocks_dunder_field_traversal():
     assert "{0.__class__}" in out
 
 
+def test_from_builtins_alias_resolves_in_name_replacer():
+    code = """
+from builtins import print
+fn = print
+fn("ok")
+"""
+    out = transform(code)
+    assert "print('ok')" in out
+
+
+
 
 
 
