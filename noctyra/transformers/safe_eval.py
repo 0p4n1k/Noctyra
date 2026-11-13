@@ -299,6 +299,20 @@ class SafeEval(ast.NodeVisitor):
             return None
 
     def visit_Subscript(self, node: ast.Subscript):
+        if (
+            isinstance(node.value, ast.Attribute)
+            and node.value.attr == "__dict__"
+            and isinstance(node.value.value, ast.Name)
+            and node.value.value.id in ("str", "bytes")
+            and self._is_builtin_usable(node.value.value.id)
+        ):
+            key_res = self.visit(node.slice)
+            if key_res is not None and not is_symbolic_ref(key_res):
+                key = self.unwrap(key_res)
+                if isinstance(key, str) and key in ATTR:
+                    cls = getattr(builtins, node.value.value.id)
+                    return getattr(cls, key, None)
+            return None
 
         value_res = self.visit(node.value)
 
@@ -521,6 +535,15 @@ class SafeEval(ast.NodeVisitor):
                     mod_name, attr_name = func.module.rsplit(".", 1)
                     return self._call_whitelisted(mod_name, attr_name, node)
 
+                if (
+                    callable(func)
+                    and getattr(func, "__name__", None) in ATTR
+                    and isinstance(getattr(func, "__self__", None), (str, bytes))
+                ):
+                    return self._call_bound_attr(
+                        func.__self__, func.__name__, node  # type: ignore[attr-defined]
+                    )
+
                 if not isinstance(func, LambdaType):
                     return None
 
@@ -568,6 +591,22 @@ class SafeEval(ast.NodeVisitor):
                             return None
 
             if (
+                attr_name == "__get__"
+                and len(node.args) in (1, 2)
+                and not node.keywords
+            ):
+                descr = self.visit(node.func.value)
+                d_name = getattr(descr, "__name__", None)
+                d_cls = getattr(descr, "__objclass__", None)
+                if d_name in ATTR and d_cls in (str, bytes):
+                    inst_res = self.visit(node.args[0])
+                    if inst_res is not None and not is_symbolic_ref(inst_res):
+                        inst = self.unwrap(inst_res)
+                        if isinstance(inst, d_cls):
+                            return descr.__get__(inst)
+                return None
+
+            if (
                 attr_name in ATTR
                 and not node.keywords
                 and not any(isinstance(a, ast.Starred) for a in node.args)
@@ -575,44 +614,7 @@ class SafeEval(ast.NodeVisitor):
                 val_res = self.visit(node.func.value)
                 if val_res is not None and not is_symbolic_ref(val_res):
                     value = self.unwrap(val_res)
-                    try:
-                        args_res = [self.visit(arg) for arg in node.args]
-                        if any(arg is None or is_symbolic_ref(arg) for arg in args_res):
-                            return None
-
-                        args = [self.unwrap(a) for a in args_res]
-                        if (
-                            attr_name == "join"
-                            and isinstance(value, str)
-                            and len(args) == 1
-                        ):
-                            seq = args[0]
-                            if isinstance(seq, (list, tuple, set)):
-                                est = sum(len(s) for s in seq if isinstance(s, str)) + len(
-                                    value
-                                ) * max(0, len(seq) - 1)
-                                if est > self.max_allocation:
-                                    return None
-                            elif isinstance(seq, str):
-                                if len(seq) * (len(value) + 1) > self.max_allocation:
-                                    return None
-
-                        func = getattr(value, attr_name)
-                        result = func(*args)
-
-                        if not isinstance(result, supported_types):
-                            return None
-
-                        if self.check_size(result):
-                            return None
-
-                        LOGGER.debug(
-                            f"Attr call: {type(value).__name__}.{attr_name} -> {result!r}"
-                        )
-                        return result
-
-                    except Exception:
-                        return None
+                    return self._call_bound_attr(value, attr_name, node)
 
             module = self.visit(node.func.value)
 
@@ -668,6 +670,43 @@ class SafeEval(ast.NodeVisitor):
         if res is not None and self.check_size(res):
             return None
         return res
+
+    def _call_bound_attr(self, value: Any, attr_name: str, node: ast.Call) -> Any:
+        if node.keywords or any(isinstance(a, ast.Starred) for a in node.args):
+            return None
+        try:
+            args_res = [self.visit(arg) for arg in node.args]
+            if any(arg is None or is_symbolic_ref(arg) for arg in args_res):
+                return None
+
+            args = [self.unwrap(a) for a in args_res]
+            if attr_name == "join" and isinstance(value, str) and len(args) == 1:
+                seq = args[0]
+                if isinstance(seq, (list, tuple, set)):
+                    est = sum(len(s) for s in seq if isinstance(s, str)) + len(
+                        value
+                    ) * max(0, len(seq) - 1)
+                    if est > self.max_allocation:
+                        return None
+                elif isinstance(seq, str):
+                    if len(seq) * (len(value) + 1) > self.max_allocation:
+                        return None
+
+            func = getattr(value, attr_name)
+            result = func(*args)
+
+            if not isinstance(result, supported_types):
+                return None
+
+            if self.check_size(result):
+                return None
+
+            LOGGER.debug(
+                f"Attr call: {type(value).__name__}.{attr_name} -> {result!r}"
+            )
+            return result
+        except Exception:
+            return None
 
     def _call_whitelisted(
         self, mod_name: str, attr_name: str, node: ast.Call

@@ -1477,3 +1477,11 @@ while _state != 0:
     assert out2.index("'A'") < out2.index("'B'") < out2.index("'C'")
 
 
+def test_str_dict_descriptor_get_bound_method():
+    code = """
+joiner = str.__dict__["join"].__get__("", str)
+msg = joiner(["h", "e", "l", "l", "o"])
+print(msg)
+"""
+    out = transform(code)
+    assert "print('hello')" in out
