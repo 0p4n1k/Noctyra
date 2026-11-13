@@ -17,6 +17,7 @@ from noctyra.transformers import (
     ExecUnpacker,
     TernarySimplifier,
     DictDispatchSimplifier,
+    BuiltinFolder,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -31,6 +32,7 @@ def transform(code: str) -> str:
             ConstsTransformer,
             AlgebraicSimplifier,
             CollectionsTransformer,
+            BuiltinFolder,
             DictDispatchSimplifier,
             BasicFunctions,
             ExecUnpacker,
@@ -800,3 +802,28 @@ def f():
     assert "('print', 42, 20, mut['k'])" in out
     assert "tbl" not in out
     assert "arr" not in out
+
+
+# -- builtin folder --
+
+
+def test_builtin_folder():
+    code = """
+a = int("0xff", 16)
+b = bin(10)
+c = oct(8)
+d = ascii("é")
+e = any([0, False, 1])
+f = all([1, True, "ok"])
+g = sorted([3, 1, 2])
+h = dict(zip(["x", "y"], [10, 20]))
+"""
+    out = transform(code)
+    assert "a = 255" in out
+    assert "b = '0b1010'" in out
+    assert "c = '0o10'" in out
+    assert "d = \"'\\\\xe9'\"" in out
+    assert "e = True" in out
+    assert "f = True" in out
+    assert "g = [1, 2, 3]" in out
+    assert "h = {'x': 10, 'y': 20}" in out

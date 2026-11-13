@@ -18,6 +18,7 @@ from .StringFormat import StringFormatTransformer
 from .ExecUnpacker import ExecUnpacker
 from .TernarySimplifier import TernarySimplifier
 from .DictDispatch import DictDispatchSimplifier
+from .BuiltinFold import BuiltinFolder
 
 __all__ = [
     "ConstsTransformer",
@@ -40,4 +41,5 @@ __all__ = [
     "ExecUnpacker",
     "TernarySimplifier",
     "DictDispatchSimplifier",
+    "BuiltinFolder",
 ]
