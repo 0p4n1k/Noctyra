@@ -33,6 +33,7 @@ from noctyra.transformers import (
     LambdaLP,
     LCTransformer,
     NameReplacer,
+    StringFormatTransformer,
 )
 from noctyra.utils import LOGGER
 
@@ -191,6 +192,7 @@ def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
             BasicFunctions,
             BasicAttributes,
             FStringTransformer,
+            StringFormatTransformer,
             LCTransformer,
             ConditionSimplifier,
             ControlFlowSimplifier,

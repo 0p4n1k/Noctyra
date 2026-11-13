@@ -14,6 +14,7 @@ from .Imports import ImportAliasFolder
 from .Algebraic import AlgebraicSimplifier
 from .ControlFlow import ControlFlowSimplifier
 from .Collections import CollectionsTransformer
+from .StringFormat import StringFormatTransformer
 
 __all__ = [
     "ConstsTransformer",
@@ -32,4 +33,5 @@ __all__ = [
     "AlgebraicSimplifier",
     "ControlFlowSimplifier",
     "CollectionsTransformer",
+    "StringFormatTransformer",
 ]

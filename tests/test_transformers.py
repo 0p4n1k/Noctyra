@@ -13,6 +13,7 @@ from noctyra.transformers import (
     AlgebraicSimplifier,
     ControlFlowSimplifier,
     CollectionsTransformer,
+    StringFormatTransformer,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -30,6 +31,7 @@ def transform(code: str) -> str:
             BasicFunctions,
             BasicAttributes,
             FStringTransformer,
+            StringFormatTransformer,
             LCTransformer,
             ConditionSimplifier,
             ControlFlowSimplifier,
@@ -683,3 +685,22 @@ h = "".join(reversed("abc"))
     assert "f = 2" in out
     assert "g = 7" in out
     assert "h = 'cba'" in out
+
+
+# -- string format transformer --
+
+
+def test_string_format_percent_and_bytearray():
+    code = """
+a = "{0} {name}".format("hi", name="there")
+b = "%s:%d" % ("port", 8080)
+c = b"hello %s" % b"world"
+d = bytearray([79, 75]).decode("utf-8")
+e = bytes([65, 66]).decode()
+"""
+    out = transform(code)
+    assert "a = 'hi there'" in out
+    assert "b = 'port:8080'" in out
+    assert "c = b'hello world'" in out
+    assert "d = 'OK'" in out
+    assert "e = 'AB'" in out
