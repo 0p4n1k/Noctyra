@@ -1415,3 +1415,14 @@ def test_cli_pipeline_single_dir_errors_and_stdout(tmp_path, monkeypatch, capsys
     assert "= 21" in captured
 
 
+def test_variadic_lambda_pure_args_len_and_boolop_walrus():
+    code = """
+os = __import__('os')
+s = lambda *_: []
+idk = str(ModuleNotFoundError)
+x = 1 if (not idk or not os or not s or not (fn := getattr(__builtins__, 'len'))) else fn([s(os.close, int), str])
+s_val = 'olleh'[::-fn([s(os.close)])]
+"""
+    out = transform(code)
+    assert "x = 2" in out
+    assert "s_val = 'hello'" in out

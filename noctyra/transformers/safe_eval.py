@@ -10,16 +10,36 @@ from noctyra.core import (
     unwrap as core_unwrap,
 )
 from noctyra.utils import ATTR, BIN_OPS, UNARY_OPS, COMP_OPS, FUNCS, WHITELIST, LOGGER
+from noctyra.utils.Shared import is_pure_expr
 from typing import Any
 import ast
 import blosc
 import brotli
+import builtins
 import bz2
 import lzma
 import operator
 import re
 import struct
 import zlib
+
+_UNBOUND_ARG = object()
+
+
+def _is_pure_eval_arg(node: ast.AST) -> bool:
+    if isinstance(node, ast.Attribute):
+        return _is_pure_eval_arg(node.value)
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        return all(
+            not isinstance(e, ast.Starred) and _is_pure_eval_arg(e)
+            for e in node.elts
+        )
+    if isinstance(node, ast.Dict):
+        return all(
+            (k is None or _is_pure_eval_arg(k)) and _is_pure_eval_arg(v)
+            for k, v in zip(node.keys, node.values)
+        )
+    return is_pure_expr(node, allow_containers=True)
 
 _stdlib_zstd: Any
 try:
@@ -111,25 +131,36 @@ class SafeEval(ast.NodeVisitor):
             kwargs = {}
 
         fn_args = fn.get_args()
-        if fn_args.vararg is not None or fn_args.kwarg is not None:
-            return None
 
         posonly_names = [a.arg for a in fn_args.posonlyargs]
         regular_names = [a.arg for a in fn_args.args]
         kwonly_names = [a.arg for a in fn_args.kwonlyargs]
         all_pos = posonly_names + regular_names
 
-        if len(args) > len(all_pos):
-            return None
-
         bound: dict[str, Any] = {}
-        for i, arg in enumerate(args):
+        for i, arg in enumerate(args[: len(all_pos)]):
             bound[all_pos[i]] = arg
 
-        for name, val in kwargs.items():
-            if (name not in regular_names and name not in kwonly_names) or name in bound:
+        if len(args) > len(all_pos):
+            if fn_args.vararg is None:
                 return None
-            bound[name] = val
+            bound[fn_args.vararg.arg] = tuple(args[len(all_pos) :])
+        elif fn_args.vararg is not None:
+            bound[fn_args.vararg.arg] = ()
+
+        extra_kwargs: dict[str, Any] = {}
+        for name, val in kwargs.items():
+            if name in regular_names or name in kwonly_names:
+                if name in bound:
+                    return None
+                bound[name] = val
+            elif fn_args.kwarg is None:
+                return None
+            else:
+                extra_kwargs[name] = val
+
+        if fn_args.kwarg is not None:
+            bound[fn_args.kwarg.arg] = extra_kwargs
 
         default_start = len(all_pos) - len(fn_args.defaults)
         for idx, pname in enumerate(all_pos):
@@ -344,6 +375,10 @@ class SafeEval(ast.NodeVisitor):
         operand = self.visit(node.operand)
 
         if operand is None or is_symbolic_ref(operand):
+            if isinstance(node.op, ast.Not) and isinstance(
+                operand, (ImportSymbol, LambdaType)
+            ):
+                return False
             return None
 
         try:
@@ -372,6 +407,27 @@ class SafeEval(ast.NodeVisitor):
                     for kwarg in node.keywords
                     if kwarg.arg is not None
                 }
+                if func is len and len(node.args) == 1 and not kwargs_res:
+                    arg0 = node.args[0]
+                    if (
+                        args_res[0] is None
+                        and isinstance(arg0, (ast.List, ast.Tuple))
+                        and not any(isinstance(e, ast.Starred) for e in arg0.elts)
+                        and all(_is_pure_eval_arg(e) for e in arg0.elts)
+                    ):
+                        return len(arg0.elts)
+
+                if func is str and len(node.args) == 1 and not kwargs_res:
+                    arg0 = node.args[0]
+                    if (
+                        args_res[0] is None
+                        and isinstance(arg0, ast.Name)
+                        and self._is_builtin_usable(arg0.id)
+                    ):
+                        builtin_obj = getattr(builtins, arg0.id, None)
+                        if isinstance(builtin_obj, type):
+                            return str(builtin_obj)
+
                 if any(arg is None for arg in args_res):
                     return None
 
@@ -480,14 +536,24 @@ class SafeEval(ast.NodeVisitor):
                     if kwarg.arg is not None
                 }
 
-                if any(arg is None for arg in args_res):
-                    return None
+                for arg_node, arg_val in zip(node.args, args_res):
+                    if arg_val is None and not _is_pure_eval_arg(arg_node):
+                        return None
 
-                if any(v is None for v in kwargs_res.values()):
-                    return None
+                for kw_node, kw_val in zip(
+                    (kw.value for kw in node.keywords if kw.arg is not None),
+                    kwargs_res.values(),
+                ):
+                    if kw_val is None and not _is_pure_eval_arg(kw_node):
+                        return None
 
-                args = [self.unwrap(a) for a in args_res]
-                kwargs = {k: self.unwrap(v) for k, v in kwargs_res.items()}
+                args = [
+                    _UNBOUND_ARG if a is None else self.unwrap(a) for a in args_res
+                ]
+                kwargs = {
+                    k: (_UNBOUND_ARG if v is None else self.unwrap(v))
+                    for k, v in kwargs_res.items()
+                }
 
                 res = self.exec_custom_func(func, args, kwargs)  # type: ignore
                 if res is not None and self.check_size(res):

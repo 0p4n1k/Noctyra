@@ -323,15 +323,81 @@ class BaseTransformer(ast.NodeTransformer):
         return node
 
     def _visit_comp(self, node: ast.AST) -> ast.AST:
+        if not isinstance(
+            node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            return self.generic_visit(node)
+
         old_ctx = self.ctx
-        self.ctx = Context(parent=old_ctx)
-        generators = getattr(node, "generators", [])
-        for comp in generators:
+        if node.generators:
+            node.generators[0].iter = self.visit(node.generators[0].iter)
+
+        comp_ctx = Context(parent=old_ctx)
+        walrus_targets: set[str] = set()
+        for i, comp in enumerate(node.generators):
+            if i > 0:
+                if isinstance(comp.iter, ast.NamedExpr):
+                    walrus_targets.add(comp.iter.target.id)
+                self._collect_nested_walrus(comp.iter, walrus_targets)
+            for cond in comp.ifs:
+                if isinstance(cond, ast.NamedExpr):
+                    walrus_targets.add(cond.target.id)
+                self._collect_nested_walrus(cond, walrus_targets)
+        if isinstance(node, ast.DictComp):
+            for sub in (node.key, node.value):
+                if isinstance(sub, ast.NamedExpr):
+                    walrus_targets.add(sub.target.id)
+                self._collect_nested_walrus(sub, walrus_targets)
+        else:
+            if isinstance(node.elt, ast.NamedExpr):
+                walrus_targets.add(node.elt.target.id)
+            self._collect_nested_walrus(node.elt, walrus_targets)
+
+        for name in walrus_targets:
+            comp_ctx.invalidate(name)
+
+        self.ctx = comp_ctx
+        for i, comp in enumerate(node.generators):
+            if i > 0:
+                comp.iter = self.visit(comp.iter)
             for name in self._collect_target_names(comp.target):
                 self.ctx.invalidate(name)
-        result = self.generic_visit(node)
+            comp.ifs = [self.visit(cond) for cond in comp.ifs]
+
+        if isinstance(node, ast.DictComp):
+            node.key = self.visit(node.key)
+            node.value = self.visit(node.value)
+        else:
+            node.elt = self.visit(node.elt)
+
         self.ctx = old_ctx
-        return result
+        for name in walrus_targets | set(comp_ctx.invalidated):
+            self.ctx.invalidate(name)
+        return node
+
+    def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
+        old_ctx = self.ctx
+        node.args.defaults = [self.visit(d) for d in node.args.defaults]
+        node.args.kw_defaults = [
+            self.visit(d) if d is not None else None for d in node.args.kw_defaults
+        ]
+
+        lambda_ctx = Context(parent=old_ctx)
+        for arg in (
+            list(node.args.posonlyargs)
+            + list(node.args.args)
+            + list(node.args.kwonlyargs)
+        ):
+            lambda_ctx.invalidate(arg.arg)
+        if node.args.vararg is not None:
+            lambda_ctx.invalidate(node.args.vararg.arg)
+        if node.args.kwarg is not None:
+            lambda_ctx.invalidate(node.args.kwarg.arg)
+
+        self.ctx = lambda_ctx
+        node.body = self.visit(node.body)
+        self.ctx = old_ctx
+        return node
 
     def visit_ListComp(self, node: ast.ListComp) -> ast.AST:
         return self._visit_comp(node)
@@ -403,8 +469,71 @@ class BaseTransformer(ast.NodeTransformer):
         return node
 
     def visit_NamedExpr(self, node: ast.NamedExpr) -> Any:
-        self.generic_visit(node)
-        self.ctx.invalidate(node.target.id)
+        node.value = self.visit(node.value)
+        kind, payload = self._plan_bind(node.target, node.value)
+        self._apply_bind_plan(kind, payload)
+        return node
+
+    def visit_IfExp(self, node: ast.IfExp) -> Any:
+        node.test = self.visit(node.test)
+
+        old_ctx = self.ctx
+        walrus_targets: set[str] = set()
+        for branch in (node.body, node.orelse):
+            if isinstance(branch, ast.NamedExpr):
+                walrus_targets.add(branch.target.id)
+            self._collect_nested_walrus(branch, walrus_targets)
+
+        body_ctx = Context(parent=old_ctx)
+        self.ctx = body_ctx
+        node.body = self.visit(node.body)
+
+        else_ctx = Context(parent=old_ctx)
+        self.ctx = else_ctx
+        node.orelse = self.visit(node.orelse)
+
+        self.ctx = old_ctx
+        for name in walrus_targets | set(body_ctx.invalidated) | set(else_ctx.invalidated):
+            self.ctx.invalidate(name)
+        return node
+
+    def visit_BoolOp(self, node: ast.BoolOp) -> Any:
+        if not node.values:
+            return node
+        is_or = isinstance(node.op, ast.Or)
+        idx = 0
+        while idx < len(node.values):
+            node.values[idx] = self.visit(node.values[idx])
+            if idx + 1 >= len(node.values):
+                return node
+            val_res = self.eval(node.values[idx])
+            if val_res is None or is_symbolic_ref(val_res):
+                if isinstance(val_res, (ImportSymbol, LambdaType)):
+                    continues = not is_or
+                else:
+                    break
+            else:
+                truth = bool(self.unwrap(val_res))
+                continues = (not truth) if is_or else truth
+            if not continues:
+                break
+            idx += 1
+
+        if idx + 1 < len(node.values):
+            old_ctx = self.ctx
+            walrus_targets: set[str] = set()
+            for val in node.values[idx + 1 :]:
+                if isinstance(val, ast.NamedExpr):
+                    walrus_targets.add(val.target.id)
+                self._collect_nested_walrus(val, walrus_targets)
+
+            sub_ctx = Context(parent=old_ctx)
+            self.ctx = sub_ctx
+            node.values[idx + 1 :] = [self.visit(val) for val in node.values[idx + 1 :]]
+
+            self.ctx = old_ctx
+            for name in walrus_targets | set(sub_ctx.invalidated):
+                self.ctx.invalidate(name)
         return node
 
     def visit_With(self, node: ast.With) -> Any:
