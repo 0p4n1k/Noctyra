@@ -11,6 +11,7 @@ from noctyra.transformers import (
     ImportAliasFolder,
     BasicInliner,
     AlgebraicSimplifier,
+    ControlFlowSimplifier,
 )
 from noctyra.core import TransformerPipeline
 import ast
@@ -29,6 +30,7 @@ def transform(code: str) -> str:
             FStringTransformer,
             LCTransformer,
             ConditionSimplifier,
+            ControlFlowSimplifier,
             NameReplacer,
             DeadCodeRemover,
         ]
@@ -628,3 +630,29 @@ def fn(x):
     assert "never" not in out
     assert "unreachable" not in out
     assert "return used_mod.go(x)" in out or "y = used_mod.go(x)" in out
+
+
+# -- control flow simplifier --
+
+
+def test_control_flow_simplifier():
+    code = """
+def f(x):
+    x = x
+    pass
+    while True:
+        y = x + 1
+        break
+    try:
+        z = y + 2
+    except Exception:
+        z = 0
+    return z
+"""
+    out = transform(code)
+    assert "x = x" not in out
+    assert "pass" not in out
+    assert "while True" not in out
+    assert "try:" not in out
+    assert "y = x + 1" in out
+    assert "z = y + 2" in out

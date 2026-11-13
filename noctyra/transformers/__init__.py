@@ -12,6 +12,7 @@ from .FStrings import FStringTransformer
 from .Renamer import IdentifierRenamer
 from .Imports import ImportAliasFolder
 from .Algebraic import AlgebraicSimplifier
+from .ControlFlow import ControlFlowSimplifier
 
 __all__ = [
     "ConstsTransformer",
@@ -28,4 +29,5 @@ __all__ = [
     "IdentifierRenamer",
     "ImportAliasFolder",
     "AlgebraicSimplifier",
+    "ControlFlowSimplifier",
 ]
