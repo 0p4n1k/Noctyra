@@ -1585,3 +1585,15 @@ def test_lambda_subscript_pure_container_with_builtin():
     assert "lambda" in out_unsafe
 
 
+def test_importlib_import_module_to_normal_import():
+    code = """
+import importlib
+var_2 = importlib.import_module("httpx")
+print(var_2.get("https://example.com"))
+"""
+    out = transform(code)
+    assert "import httpx" in out
+    assert "importlib.import_module" not in out
+    assert "httpx.get('https://example.com')" in out
+
+

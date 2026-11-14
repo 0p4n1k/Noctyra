@@ -48,6 +48,23 @@ class BasicInliner(BaseTransformer):
                 return val
         return None
 
+    def _eval_module_name(self, node: ast.AST) -> str | None:
+        val: str | None = None
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            val = node.value
+        else:
+            res = self.eval(node)
+            if res is not None and not is_symbolic_ref(res):
+                unwrapped = self.unwrap(res)
+                if isinstance(unwrapped, str):
+                    val = unwrapped
+        if not val:
+            return None
+        parts = val.split(".")
+        if all(p.isidentifier() and not keyword.iskeyword(p) for p in parts):
+            return val
+        return None
+
     def visit_Module(self, node: ast.Module) -> ast.AST:
         self._needed_imports = []
         self.generic_visit(node)
@@ -221,7 +238,53 @@ class BasicInliner(BaseTransformer):
     def visit_Call(self, node: ast.Call) -> ast.AST:
         self.generic_visit(node)
 
-        if not isinstance(node.func, ast.Name) or node.keywords:
+        if node.keywords:
+            return node
+
+        if len(node.args) == 1:
+            is_dynamic_import = (
+                isinstance(node.func, ast.Name)
+                and node.func.id == "__import__"
+                and self._is_builtin_usable("__import__")
+            )
+            if not is_dynamic_import:
+                func_sym = self.eval(node.func)
+                if isinstance(func_sym, ImportSymbol) and func_sym.module in (
+                    "builtins.__import__",
+                    "__builtins__.__import__",
+                    "importlib.import_module",
+                ):
+                    is_dynamic_import = True
+
+            if is_dynamic_import:
+                mod_name = self._eval_module_name(node.args[0])
+                if mod_name is not None:
+                    top_name = mod_name.split(".")[0]
+                    existing_entry = self.ctx.get(top_name)
+                    if (
+                        not self.ctx.is_usable(top_name)
+                        or self.ctx.remap_get(top_name) is not None
+                        or (
+                            existing_entry is not None
+                            and not isinstance(existing_entry.get(), ImportSymbol)
+                        )
+                    ):
+                        return node
+                    if mod_name not in self._needed_imports:
+                        self._needed_imports.append(mod_name)
+                    LOGGER.debug(f"Inlined dynamic import({mod_name!r}) -> {mod_name}")
+                    parts = mod_name.split(".")
+                    res_node: ast.expr = ast.copy_location(
+                        ast.Name(id=parts[0], ctx=ast.Load()), node
+                    )
+                    for part in parts[1:]:
+                        res_node = ast.copy_location(
+                            ast.Attribute(value=res_node, attr=part, ctx=ast.Load()),
+                            node,
+                        )
+                    return res_node
+
+        if not isinstance(node.func, ast.Name):
             return node
 
         # getattr(obj, 'attr') -> obj.attr (or attr if obj is builtins/__builtins__)
@@ -262,28 +325,5 @@ class BasicInliner(BaseTransformer):
             if ident is not None:
                 LOGGER.debug(f"Inlined {node.func.id}({ident!r}) -> {ident}")
                 return ast.copy_location(ast.Name(id=ident, ctx=ast.Load()), node)
-
-        # __import__('mod') -> mod (+ ensure import mod at module top)
-        if (
-            node.func.id == "__import__"
-            and self._is_builtin_usable("__import__")
-            and len(node.args) == 1
-        ):
-            mod_name = self._eval_identifier(node.args[0])
-            if mod_name is not None:
-                existing_entry = self.ctx.get(mod_name)
-                if (
-                    not self.ctx.is_usable(mod_name)
-                    or self.ctx.remap_get(mod_name) is not None
-                    or (
-                        existing_entry is not None
-                        and not isinstance(existing_entry.get(), ImportSymbol)
-                    )
-                ):
-                    return node
-                if mod_name not in self._needed_imports:
-                    self._needed_imports.append(mod_name)
-                LOGGER.debug(f"Inlined __import__({mod_name!r}) -> {mod_name}")
-                return ast.copy_location(ast.Name(id=mod_name, ctx=ast.Load()), node)
 
         return node
