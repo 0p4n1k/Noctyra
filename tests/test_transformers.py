@@ -1509,3 +1509,16 @@ fn("hey")
     assert "print('hey')" in out
 
 
+def test_builtins_import_ternary_and_attribute_alias():
+    code = """
+var_1 = __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
+__im0__ = __import__ if isinstance(var_1, dict) else var_1.__import__
+__bm0__ = __im0__("base64")
+__bd__ = __bm0__.b85decode
+print(__bd__(b"Xk~0{Zv"))
+exec(__bd__(b"aB^vGbSN}3DF").decode())
+"""
+    out = transform(code)
+    assert "print(b'hello')" in out
+    assert "print(42)" in out
+

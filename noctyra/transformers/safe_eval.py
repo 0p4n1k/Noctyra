@@ -543,6 +543,14 @@ class SafeEval(ast.NodeVisitor):
                 func = func_entry.get()
 
                 if isinstance(func, ImportSymbol) and "." in func.module:
+                    if func.module in ("builtins.__import__", "__builtins__.__import__"):
+                        if len(node.args) == 1 and not node.keywords:
+                            arg_res = self.visit(node.args[0])
+                            if arg_res is not None and not is_symbolic_ref(arg_res):
+                                mod_arg = self.unwrap(arg_res)
+                                if isinstance(mod_arg, str):
+                                    return ImportSymbol(mod_arg)
+                        return None
                     mod_name, attr_name = func.module.rsplit(".", 1)
                     return self._call_whitelisted(mod_name, attr_name, node)
 
@@ -859,6 +867,20 @@ class SafeEval(ast.NodeVisitor):
         if node.id == "__builtins__" and self._is_builtin_usable("__builtins__"):
             return ImportSymbol("__builtins__")
 
+        if node.id == "__import__" and self._is_builtin_usable("__import__"):
+            return ImportSymbol("builtins.__import__")
+
+        return None
+
+    def visit_Attribute(self, node: ast.Attribute):
+        value_res = self.visit(node.value)
+        if isinstance(value_res, ImportSymbol):
+            base = (
+                "builtins"
+                if value_res.module in ("builtins", "__builtins__")
+                else value_res.module
+            )
+            return ImportSymbol(f"{base}.{node.attr}")
         return None
 
     def visit_List(self, node: ast.List):
