@@ -1498,3 +1498,14 @@ print(res)
     out = transform(code)
     assert "print('__import__')" in out
 
+
+def test_builtins_dict_or_vars_ternary_subscript():
+    code = """
+b = __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
+fn = b['print']
+fn("hey")
+"""
+    out = transform(code)
+    assert "print('hey')" in out
+
+

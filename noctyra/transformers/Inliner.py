@@ -207,6 +207,15 @@ class BasicInliner(BaseTransformer):
                 ast.Attribute(value=target_obj, attr=ident, ctx=node.ctx), node
             )
 
+        val_res = self.eval(node.value)
+        if (
+            isinstance(val_res, ImportSymbol)
+            and val_res.module in ("builtins", "__builtins__")
+            and self._is_builtin_usable(ident)
+        ):
+            LOGGER.debug(f"Inlined {val_res.module}[{ident!r}] -> {ident}")
+            return ast.copy_location(ast.Name(id=ident, ctx=node.ctx), node)
+
         return node
 
     def visit_Call(self, node: ast.Call) -> ast.AST:

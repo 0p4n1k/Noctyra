@@ -316,6 +316,17 @@ class SafeEval(ast.NodeVisitor):
 
         value_res = self.visit(node.value)
 
+        if isinstance(value_res, ImportSymbol) and value_res.module in (
+            "builtins",
+            "__builtins__",
+        ):
+            _slice_res = self.visit(node.slice)
+            if _slice_res is not None and not is_symbolic_ref(_slice_res):
+                _slice = self.unwrap(_slice_res)
+                if isinstance(_slice, str) and _slice.isidentifier():
+                    return ImportSymbol(f"{value_res.module}.{_slice}")
+            return None
+
         if value_res is None or is_symbolic_ref(value_res):
             return None
 
@@ -566,6 +577,19 @@ class SafeEval(ast.NodeVisitor):
 
                 elif func_name == "__import__":
                     return ImportSymbol(node.args[0].value)
+
+            elif (
+                func_name == "vars"
+                and self._is_builtin_usable("vars")
+                and len(node.args) == 1
+                and not node.keywords
+            ):
+                arg_res = self.visit(node.args[0])
+                if isinstance(arg_res, ImportSymbol) and arg_res.module in (
+                    "builtins",
+                    "__builtins__",
+                ):
+                    return ImportSymbol("__builtins__")
 
         elif isinstance(node.func, ast.Attribute):
             attr_name = node.func.attr
@@ -832,6 +856,9 @@ class SafeEval(ast.NodeVisitor):
             result = entry.get()
             return result
 
+        if node.id == "__builtins__" and self._is_builtin_usable("__builtins__"):
+            return ImportSymbol("__builtins__")
+
         return None
 
     def visit_List(self, node: ast.List):
@@ -982,6 +1009,14 @@ class SafeEval(ast.NodeVisitor):
         cond_res = self.visit(node.test)
 
         if cond_res is None or is_symbolic_ref(cond_res):
+            body_res = self.visit(node.body)
+            orelse_res = self.visit(node.orelse)
+            if (
+                isinstance(body_res, ImportSymbol)
+                and isinstance(orelse_res, ImportSymbol)
+                and body_res.module == orelse_res.module
+            ):
+                return body_res
             return None
 
         cond = self.unwrap(cond_res)
