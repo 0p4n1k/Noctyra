@@ -1,22 +1,30 @@
 from noctyra.utils import LOGGER
-from typing import List, Type
+from typing import Sequence, Type
 import ast
 
 
 class TransformerPipeline(ast.NodeTransformer):
     def __init__(
         self,
-        transformers: List[Type[ast.NodeTransformer]],
+        transformers: Sequence[Type[ast.NodeTransformer] | ast.NodeTransformer],
         iterations: int = 0,
         max_iterations: int = 100,
         max_depth: int = 50,
         max_allocation: int = 100_000,
+        advanced: bool = False,
     ):
-        self.transformers = [t() for t in transformers]
+        self.transformers = [
+            t() if isinstance(t, type) else t for t in transformers
+        ]
+        if advanced:
+            for t in self.transformers:
+                if hasattr(t, "advanced"):
+                    setattr(t, "advanced", True)
         self.iterations = iterations
         self.max_iterations = max_iterations
         self.max_allocation = max_allocation
         self.max_depth = max_depth
+        self.advanced = advanced
         LOGGER.info(
             f"Initialized TransformerPipeline with {len(self.transformers)} transformers and {self.iterations if self.iterations > 0 else 'auto'} iterations."
         )

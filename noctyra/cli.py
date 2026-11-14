@@ -101,6 +101,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Maximum allocation size to prevent DoS.",
     )
     parser.add_argument(
+        "--advanced",
+        action="store_true",
+        help="Enable advanced/heavy passes such as bounded while-loop evaluation (may be slower on large payloads).",
+    )
+    parser.add_argument(
         "--stdout",
         action="store_true",
         help="Print transformed code to stdout.",
@@ -215,6 +220,7 @@ def _build_pipeline(args: argparse.Namespace) -> TransformerPipeline:
         max_iterations=args.max_iterations,
         max_depth=args.max_depth,
         max_allocation=args.max_allocation,
+        advanced=args.advanced,
     )
 
 

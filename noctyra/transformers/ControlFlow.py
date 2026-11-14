@@ -32,9 +32,10 @@ def _contains_break_or_continue(stmts: list[ast.stmt]) -> bool:
 
 
 class ControlFlowSimplifier(BaseTransformer):
-    def __init__(self) -> None:
+    def __init__(self, advanced: bool = False) -> None:
         super().__init__()
         self._defined: set[str] = set()
+        self.advanced = advanced
 
     def run(
         self,
@@ -216,7 +217,7 @@ class ControlFlowSimplifier(BaseTransformer):
         outer = self._defined
         test_res = self.eval(node.test)
         cff_init = self._peek_cff_init(node)
-        if cff_init is None:
+        if self.advanced and cff_init is None:
             bounded = self._try_eval_bounded_while(node)
             if bounded is not None:
                 return bounded

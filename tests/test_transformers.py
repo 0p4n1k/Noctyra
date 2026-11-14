@@ -21,7 +21,7 @@ from noctyra.core import TransformerPipeline
 import ast
 
 
-def transform(code: str) -> str:
+def transform(code: str, *, advanced: bool = False) -> str:
     tree = ast.parse(code)
     pipeline = TransformerPipeline(
         transformers=[
@@ -41,7 +41,8 @@ def transform(code: str) -> str:
             ControlFlowSimplifier,
             NameReplacer,
             DeadCodeRemover,
-        ]
+        ],
+        advanced=advanced,
     )
     return ast.unparse(pipeline.visit(tree))
 
@@ -1536,8 +1537,11 @@ while li < 2:
     li += 1
 exec(bytes(z[0] + z[1]).decode())
 """
-    out = transform(code)
-    assert "print(123)" in out
+    out_default = transform(code)
+    assert "while li < 2:" in out_default
+
+    out_enabled = transform(code, advanced=True)
+    assert "print(123)" in out_enabled
 
 
 def test_bounded_while_respects_max_allocation_and_side_effects():
@@ -1552,6 +1556,7 @@ print(len(buf))
     pipeline = TransformerPipeline(
         transformers=[ConstsTransformer, ControlFlowSimplifier],
         max_allocation=10,
+        advanced=True,
     )
     out = ast.unparse(pipeline.visit(ast.parse(over_limit)))
     assert "while i < 50:" in out
@@ -1562,7 +1567,7 @@ while i < 3:
     print(i)
     i += 1
 """
-    out_se = transform(side_effect)
+    out_se = transform(side_effect, advanced=True)
     assert "while i < 3:" in out_se
 
 
