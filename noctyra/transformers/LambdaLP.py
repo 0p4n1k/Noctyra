@@ -99,6 +99,59 @@ def _count_param_uses(body: ast.AST, params: set[str]) -> dict[str, int]:
     return counts
 
 
+def _only_subscript_loads(body: ast.AST, pname: str) -> bool:
+    """Return True if every non-shadowed reference to pname is a Load subscript base."""
+
+    def walk(node: ast.AST, shadowed: set[str], parent: ast.AST | None) -> bool:
+        if isinstance(node, ast.Name) and node.id == pname and node.id not in shadowed:
+            return (
+                isinstance(node.ctx, ast.Load)
+                and isinstance(parent, ast.Subscript)
+                and parent.value is node
+                and isinstance(parent.ctx, ast.Load)
+            )
+        if isinstance(node, ast.Lambda):
+            for d in node.args.defaults:
+                if not walk(d, shadowed, node):
+                    return False
+            for kd in node.args.kw_defaults:
+                if kd is not None and not walk(kd, shadowed, node):
+                    return False
+            inner_shadow = set(shadowed)
+            for a in (
+                list(node.args.posonlyargs)
+                + list(node.args.args)
+                + list(node.args.kwonlyargs)
+            ):
+                inner_shadow.add(a.arg)
+            if node.args.vararg is not None:
+                inner_shadow.add(node.args.vararg.arg)
+            if node.args.kwarg is not None:
+                inner_shadow.add(node.args.kwarg.arg)
+            return walk(node.body, inner_shadow, node)
+        if isinstance(node, (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)):
+            if node.generators and not walk(node.generators[0].iter, shadowed, node):
+                return False
+            inner_shadow = set(shadowed)
+            for idx, gen in enumerate(node.generators):
+                if idx > 0 and not walk(gen.iter, inner_shadow, node):
+                    return False
+                for tc in ast.walk(gen.target):
+                    if isinstance(tc, ast.Name):
+                        inner_shadow.add(tc.id)
+                for if_expr in gen.ifs:
+                    if not walk(if_expr, inner_shadow, node):
+                        return False
+            if isinstance(node, ast.DictComp):
+                return walk(node.key, inner_shadow, node) and (
+                    node.value is None or walk(node.value, inner_shadow, node)
+                )
+            return walk(node.elt, inner_shadow, node)
+        return all(walk(child, shadowed, node) for child in ast.iter_child_nodes(node))
+
+    return walk(body, set(), None)
+
+
 class Replacer(BaseTransformer):
     def visit_Lambda(self, node: ast.Lambda) -> ast.AST:
         node.args.defaults = [self.visit(d) for d in node.args.defaults]
@@ -234,7 +287,17 @@ class LambdaLP(BaseTransformer):
         inner_bound = _collect_bound_names_in_expr(func_body)
         for pname, arg_expr in bound_exprs.items():
             if uses.get(pname, 0) != 1 and not is_pure_expr(arg_expr):
-                return node
+                if not (
+                    is_pure_expr(arg_expr, allow_containers=True)
+                    and (
+                        isinstance(arg_expr, ast.Tuple)
+                        or (
+                            isinstance(arg_expr, (ast.List, ast.Dict))
+                            and _only_subscript_loads(func_body, pname)
+                        )
+                    )
+                ):
+                    return node
             if _collect_loaded_names(arg_expr) & inner_bound:
                 return node
 

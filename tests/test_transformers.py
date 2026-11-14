@@ -1571,3 +1571,17 @@ while i < 3:
     assert "while i < 3:" in out_se
 
 
+def test_lambda_subscript_pure_container_with_builtin():
+    from noctyra.transformers import LambdaLP
+
+    pipeline = TransformerPipeline([LambdaLP, CollectionsTransformer])
+    code = '(lambda _, /: _[1](_[0]))(["hey", print])'
+    out = ast.unparse(pipeline.visit(ast.parse(code)))
+    assert out == "print('hey')"
+
+    # Must NOT inline if the mutable list is passed directly (identity/mutation hazard)
+    unsafe = '(lambda _, /: (_ is _, _[0]))(["hey", print])'
+    out_unsafe = ast.unparse(pipeline.visit(ast.parse(unsafe)))
+    assert "lambda" in out_unsafe
+
+

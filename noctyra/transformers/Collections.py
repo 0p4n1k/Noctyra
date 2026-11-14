@@ -51,6 +51,25 @@ class CollectionsTransformer(BaseTransformer):
             LOGGER.debug(f"Folded Subscript into constant: {val!r}")
             return ast.copy_location(ast.Constant(value=val), node)
 
+        if (
+            isinstance(node.value, (ast.List, ast.Tuple))
+            and len(node.value.elts) <= self.max_allocation
+            and not any(isinstance(e, ast.Starred) for e in node.value.elts)
+            and all(
+                isinstance(e, ast.Lambda) or is_pure_expr(e, allow_containers=True)
+                for e in node.value.elts
+            )
+        ):
+            key = self._eval_const_expr(node.slice, eval_subscripts=True)
+            if (
+                isinstance(key, int)
+                and not isinstance(key, bool)
+                and -len(node.value.elts) <= key < len(node.value.elts)
+            ):
+                elem = node.value.elts[key]
+                LOGGER.debug(f"Folded pure sequence Subscript[{key}] to element AST")
+                return ast.copy_location(elem, node)
+
         return node
 
     def _is_reversed_call(self, node: ast.AST) -> ast.Call | None:
