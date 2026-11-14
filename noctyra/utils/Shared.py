@@ -40,6 +40,7 @@ FUNCS: dict[str, Callable] = {
     "float": float,
     "str": str,
     "bytes": bytes,
+    "bytearray": bytearray,
     "map": map,
     "list": list,
     "pow": pow,

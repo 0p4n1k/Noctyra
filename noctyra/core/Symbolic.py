@@ -92,6 +92,13 @@ def to_node(value: Any) -> Optional[ast.expr]:
         return None
     if value is None or isinstance(value, (bool, int, float, str, bytes)):
         return ast.Constant(value=value)
+    if isinstance(value, bytearray):
+        args: list[ast.expr] = [ast.Constant(value=bytes(value))] if value else []
+        return ast.Call(
+            func=ast.Name(id="bytearray", ctx=ast.Load()),
+            args=args,
+            keywords=[],
+        )
     if isinstance(value, list):
         elts = [to_node(x) for x in value]
         if any(e is None for e in elts):

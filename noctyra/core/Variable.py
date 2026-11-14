@@ -3,9 +3,19 @@ from noctyra.core.Symbolic import SymbolicValue
 from .Symbolic import LambdaType
 
 supported_types = (
-    int | float | str | bool | bytes | list | dict | set | LambdaType | SymbolicValue
+    int
+    | float
+    | str
+    | bool
+    | bytes
+    | bytearray
+    | list
+    | dict
+    | set
+    | LambdaType
+    | SymbolicValue
 )
-supported_iterator = str | bytes | dict | list | set
+supported_iterator = str | bytes | bytearray | dict | list | set
 
 
 T = TypeVar("T", bound=supported_types | SymbolicValue)

@@ -73,7 +73,7 @@ class BaseTransformer(ast.NodeTransformer):
         )
 
     def _within_allocation(self, value: Any) -> bool:
-        if isinstance(value, (str, bytes, list, tuple, dict, set)):
+        if isinstance(value, (str, bytes, bytearray, list, tuple, dict, set)):
             return len(value) <= self.max_allocation
         return True
 
@@ -455,7 +455,7 @@ class BaseTransformer(ast.NodeTransformer):
         ctx: Context | None = self.ctx
         while ctx is not None:
             for var in list(ctx.vars):
-                if isinstance(core_unwrap(var.get()), (list, dict, set)):
+                if isinstance(core_unwrap(var.get()), (list, dict, set, bytearray)):
                     self.ctx.invalidate(var.name)
             ctx = ctx.parent
 
@@ -574,7 +574,7 @@ class BaseTransformer(ast.NodeTransformer):
                 if isinstance(arg, ast.Name):
                     var = self.ctx.get(arg.id)
                     if var is not None and isinstance(
-                        core_unwrap(var.get()), (list, dict, set)
+                        core_unwrap(var.get()), (list, dict, set, bytearray)
                     ):
                         self.ctx.invalidate(arg.id)
                         self._invalidate_mutable_aliases()

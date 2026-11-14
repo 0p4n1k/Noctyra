@@ -195,7 +195,7 @@ class SafeEval(ast.NodeVisitor):
 
     def check_size(self, obj):
         val = self.unwrap(obj)
-        if isinstance(val, (str, bytes, list, dict, set, tuple, range)):
+        if isinstance(val, (str, bytes, bytearray, list, dict, set, tuple, range)):
             try:
                 if len(val) > self.max_allocation:
                     LOGGER.debug(f"Size limit exceeded for {type(val).__name__}")
@@ -500,7 +500,7 @@ class SafeEval(ast.NodeVisitor):
                     try:
                         args = [self.unwrap(a) for a in args_res]
                         kwargs = {k: self.unwrap(v) for k, v in kwargs_res.items()}
-                        if func is bytes and not kwargs and len(args) == 1:
+                        if func in (bytes, bytearray) and not kwargs and len(args) == 1:
                             if isinstance(args[0], int) and not isinstance(
                                 args[0], bool
                             ):

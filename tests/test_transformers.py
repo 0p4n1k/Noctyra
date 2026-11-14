@@ -1522,3 +1522,47 @@ exec(__bd__(b"aB^vGbSN}3DF").decode())
     assert "print(b'hello')" in out
     assert "print(42)" in out
 
+
+def test_bytearray_and_bounded_nested_while_loop():
+    code = """
+p = [bytes([b ^ 42 for b in b"print("]), bytes([b ^ 42 for b in b"123)"])]
+z = [bytearray(), bytearray()]
+li = 0
+while li < 2:
+    po = 0
+    while po < len(p[li]):
+        z[li].append(p[li][po] ^ 42)
+        po += 1
+    li += 1
+exec(bytes(z[0] + z[1]).decode())
+"""
+    out = transform(code)
+    assert "print(123)" in out
+
+
+def test_bounded_while_respects_max_allocation_and_side_effects():
+    over_limit = """
+i = 0
+buf = bytearray()
+while i < 50:
+    buf.append(65)
+    i += 1
+print(len(buf))
+"""
+    pipeline = TransformerPipeline(
+        transformers=[ConstsTransformer, ControlFlowSimplifier],
+        max_allocation=10,
+    )
+    out = ast.unparse(pipeline.visit(ast.parse(over_limit)))
+    assert "while i < 50:" in out
+
+    side_effect = """
+i = 0
+while i < 3:
+    print(i)
+    i += 1
+"""
+    out_se = transform(side_effect)
+    assert "while i < 3:" in out_se
+
+
