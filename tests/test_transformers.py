@@ -1485,3 +1485,16 @@ print(msg)
 """
     out = transform(code)
     assert "print('hello')" in out
+
+
+def test_single_return_def_with_generatorexp_folds_calls():
+    code = """
+data = b"\\x02\\x0240-2/)\\x02\\x02"
+def dec(buf, key=93):
+    return "".join(chr(x ^ key) for x in buf)
+res = dec(data)
+print(res)
+"""
+    out = transform(code)
+    assert "print('__import__')" in out
+

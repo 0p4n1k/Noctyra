@@ -881,6 +881,102 @@ class SafeEval(ast.NodeVisitor):
             return None
         return res
 
+    @staticmethod
+    def _bind_comp_target(
+        target: ast.AST, val: Any, env: dict[str, Any]
+    ) -> bool:
+        if isinstance(target, ast.Name):
+            env[target.id] = val
+            return True
+        if isinstance(target, (ast.Tuple, ast.List)) and not any(
+            isinstance(e, ast.Starred) for e in target.elts
+        ):
+            if not isinstance(val, (tuple, list)) or len(target.elts) != len(val):
+                return False
+            return all(
+                SafeEval._bind_comp_target(t, item, env)
+                for t, item in zip(target.elts, val)
+            )
+        return False
+
+    def _eval_comprehension(
+        self, elt: ast.expr, generators: list[ast.comprehension]
+    ) -> list[Any] | None:
+        if self.depth >= self.max_depth or not generators:
+            return None
+        if any(g.is_async for g in generators):
+            return None
+
+        results: list[Any] = []
+
+        def _recurse(gen_idx: int, cur_ctx: Context) -> bool:
+            if gen_idx == len(generators):
+                sub_eval = SafeEval(
+                    cur_ctx,
+                    depth=self.depth + 1,
+                    max_depth=self.max_depth,
+                    max_allocation=self.max_allocation,
+                )
+                val_res = sub_eval.visit(elt)
+                if val_res is None or is_symbolic_ref(val_res):
+                    return False
+                results.append(self.unwrap(val_res))
+                return len(results) <= self.max_allocation
+
+            gen = generators[gen_idx]
+            iter_eval = SafeEval(
+                cur_ctx,
+                depth=self.depth + 1,
+                max_depth=self.max_depth,
+                max_allocation=self.max_allocation,
+            )
+            iter_res = iter_eval.visit(gen.iter)
+            if iter_res is None or is_symbolic_ref(iter_res):
+                return False
+            iterable = self.unwrap(iter_res)
+            if not isinstance(
+                iterable, (list, tuple, str, bytes, range, set, dict)
+            ) or self.check_size(iterable):
+                return False
+
+            for item in iterable:
+                env: dict[str, Any] = {}
+                if not self._bind_comp_target(gen.target, item, env):
+                    return False
+                next_ctx = Context(
+                    [Variable(k, v) for k, v in env.items()], cur_ctx
+                )
+                if gen.ifs:
+                    cond_eval = SafeEval(
+                        next_ctx,
+                        depth=self.depth + 1,
+                        max_depth=self.max_depth,
+                        max_allocation=self.max_allocation,
+                    )
+                    passed = True
+                    for cond_node in gen.ifs:
+                        c_res = cond_eval.visit(cond_node)
+                        if c_res is None or is_symbolic_ref(c_res):
+                            return False
+                        if not bool(self.unwrap(c_res)):
+                            passed = False
+                            break
+                    if not passed:
+                        continue
+                if not _recurse(gen_idx + 1, next_ctx):
+                    return False
+            return True
+
+        if not _recurse(0, self.ctx):
+            return None
+        return results
+
+    def visit_ListComp(self, node: ast.ListComp):
+        return self._eval_comprehension(node.elt, node.generators)
+
+    def visit_GeneratorExp(self, node: ast.GeneratorExp):
+        return self._eval_comprehension(node.elt, node.generators)
+
     def visit_IfExp(self, node: ast.IfExp):
 
         cond_res = self.visit(node.test)

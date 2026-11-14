@@ -788,7 +788,20 @@ class BaseTransformer(ast.NodeTransformer):
         return self.visit_Try(node)
 
     def visit_FunctionDef(self, node: ast.FunctionDef):
-        return self._def_visit(node)
+        res = self._def_visit(node)
+        if (
+            isinstance(res, ast.FunctionDef)
+            and not res.decorator_list
+            and len(res.body) == 1
+            and isinstance(res.body[0], ast.Return)
+            and res.body[0].value is not None
+            and not any(
+                isinstance(n, (ast.Yield, ast.YieldFrom, ast.Await))
+                for n in ast.walk(res.body[0].value)
+            )
+        ):
+            self.ctx.set(res.name, LambdaType(res.body[0].value, res.args))
+        return res
 
     def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
         return self._def_visit(node)
