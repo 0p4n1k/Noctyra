@@ -345,9 +345,10 @@ class BaseTransformer(ast.NodeTransformer):
                 self._collect_nested_walrus(cond, walrus_targets)
         if isinstance(node, ast.DictComp):
             for sub in (node.key, node.value):
-                if isinstance(sub, ast.NamedExpr):
-                    walrus_targets.add(sub.target.id)
-                self._collect_nested_walrus(sub, walrus_targets)
+                if sub is not None:
+                    if isinstance(sub, ast.NamedExpr):
+                        walrus_targets.add(sub.target.id)
+                    self._collect_nested_walrus(sub, walrus_targets)
         else:
             if isinstance(node.elt, ast.NamedExpr):
                 walrus_targets.add(node.elt.target.id)
@@ -366,7 +367,8 @@ class BaseTransformer(ast.NodeTransformer):
 
         if isinstance(node, ast.DictComp):
             node.key = self.visit(node.key)
-            node.value = self.visit(node.value)
+            if node.value is not None:
+                node.value = self.visit(node.value)
         else:
             node.elt = self.visit(node.elt)
 
